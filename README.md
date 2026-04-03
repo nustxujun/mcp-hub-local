@@ -16,16 +16,20 @@ A local hub for centrally managing and orchestrating [Model Context Protocol (MC
 
 > **Dashboard** - Manage MCPs, workspaces, sessions, and logs all in one place.
 
+**Sessions**
+![Sessions](docs/screenshots/sessions.png)
 
-| Sessions | MCPs | Workspaces |
-| -------- | ---- | ---------- |
-| ![Sessions](docs/screenshots/sessions.png) | ![MCPs](docs/screenshots/mcps.png) | ![Workspaces](docs/screenshots/workspaces.png) |
+**MCPs**
+![MCPs](docs/screenshots/mcps.png)
 
+**Workspaces**
+![Workspaces](docs/screenshots/workspaces.png)
 
+**Logs**
+![Logs](docs/screenshots/logs.png)
 
-| Logs | Settings |
-| ---- | -------- |
-| ![Logs](docs/screenshots/logs.png) | ![Settings](docs/screenshots/settings.png) |
+**Settings**
+![Settings](docs/screenshots/settings.png)
 
 
 ## Features
@@ -309,16 +313,20 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 
 > **控制面板** - 在一个界面中管理 MCP、工作区、会话和日志。
 
+**Sessions**
+![Sessions](docs/screenshots/sessions.png)
 
-| 会话       | MCP  | 工作区        |
-| -------- | ---- | ---------- |
-| ![Sessions](docs/screenshots/sessions.png) | ![MCPs](docs/screenshots/mcps.png) | ![Workspaces](docs/screenshots/workspaces.png) |
+**MCPs**
+![MCPs](docs/screenshots/mcps.png)
 
+**Workspaces**
+![Workspaces](docs/screenshots/workspaces.png)
 
+**Logs**
+![Logs](docs/screenshots/logs.png)
 
-| 日志   | 设置       |
-| ---- | -------- |
-| ![Logs](docs/screenshots/logs.png) | ![Settings](docs/screenshots/settings.png) |
+**Settings**
+![Settings](docs/screenshots/settings.png)
 
 
 ## 功能特性
