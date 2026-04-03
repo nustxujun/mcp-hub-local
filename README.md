@@ -1,12 +1,5 @@
 # MCP Hub Local
 
-[npm](https://www.npmjs.com/package/mcp-hub-local)
-[Node.js](https://nodejs.org/)
-[TypeScript](https://www.typescriptlang.org/)
-[License: MIT](./LICENSE)
-[Fastify](https://fastify.dev/)
-[React](https://react.dev/)
-
 **English** | **[中文](#mcp-hub-local-1)**
 
 A local hub for centrally managing and orchestrating [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. Connect multiple AI clients to a single endpoint that aggregates tools, resources, and prompts from all your MCP servers.
@@ -291,18 +284,6 @@ Access the dashboard at **[http://localhost:3000/app](http://localhost:3000/app)
 ### Data Storage
 
 All data is stored in a SQLite database at `./data/hub.db` relative to the project root. The database is created automatically on first run.
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feat/my-feature`)
-3. **Commit** your changes (`git commit -m 'feat: add my feature'`)
-4. **Push** to the branch (`git push origin feat/my-feature`)
-5. **Open** a Pull Request
-
-Please use [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
 
 ## License
 
@@ -594,18 +575,6 @@ local-mcp-hub/
 ### 数据存储
 
 所有数据存储在项目根目录下的 `./data/hub.db` SQLite 数据库中，首次运行时自动创建。
-
-## 参与贡献
-
-欢迎贡献代码！请按以下步骤操作：
-
-1. **Fork** 本仓库
-2. **创建**功能分支（`git checkout -b feat/my-feature`）
-3. **提交**更改（`git commit -m 'feat: add my feature'`）
-4. **推送**到分支（`git push origin feat/my-feature`）
-5. **发起** Pull Request
-
-请使用 [Conventional Commits](https://www.conventionalcommits.org/) 规范编写提交信息。
 
 ## 开源协议
 
