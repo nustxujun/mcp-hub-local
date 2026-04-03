@@ -2,7 +2,7 @@
 
 **English** | **[中文](#mcp-hub-local-1)**
 
-A local hub for centrally managing and orchestrating [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers. Connect multiple AI clients to a single endpoint that aggregates tools, resources, and prompts from all your MCP servers.
+A single hub that takes **full control** of all MCP configurations across every workspace on your machine. Define your MCP servers once, bind them to workspaces, and let the hub automatically manage client configs, runtime lifecycles, and request routing — no more editing scattered JSON files by hand.
 
 ```
  Cursor ──┐                           ┌── File Search MCP
@@ -34,9 +34,9 @@ A local hub for centrally managing and orchestrating [Model Context Protocol (MC
 
 ## Features
 
-- **Unified MCP Gateway** - Aggregate multiple remote and local MCP servers behind a single endpoint
-- **Workspace-based Management** - Each workspace can have its own set of MCPs, accessible at `/w/<slug>`
-- **Auto-Sync Client Configs** - Automatically write MCP configurations to client config files; supports Cursor, Claude Desktop, Codex, and Gemini
+- **Centralized MCP Control** - One place to manage all MCP servers for all workspaces; no more scattered config files across different clients and projects
+- **Workspace-based Management** - Each workspace has its own set of MCPs, accessible at `/w/<slug>`; add, remove, or override MCPs per workspace from the dashboard
+- **Auto-Sync Client Configs** - The hub automatically writes MCP configurations to Cursor, Claude Desktop, Codex, and Gemini — you never touch those config files again
 - **Flexible Instance Modes** - Local MCPs support multiple instantiation strategies: `singleton`, `per-workspace`, `per-session`
 - **Session Monitoring** - Monitor MCP usage per client session in real time
 - **Web Dashboard** - Manage everything from `http://localhost:3000/app`
@@ -299,7 +299,7 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 
 **[English](#mcp-hub-local)** | **中文**
 
-一个本地化的 MCP 服务器集中管理与编排中心。将多个 AI 客户端连接到统一端点，聚合所有 MCP 服务器的工具、资源和提示词。
+一站式**全权管理**本地所有工作区的 MCP 配置。只需定义一次 MCP 服务器，绑定到各个工作区，Hub 会自动接管客户端配置、运行时生命周期和请求路由——从此告别手动编辑散落在各处的 JSON 配置文件。
 
 ```
  Cursor ──┐                           ┌── 文件搜索 MCP
@@ -331,9 +331,9 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 
 ## 功能特性
 
-- **统一 MCP 入口** - 将多个远程和本地 MCP 服务器聚合在一起，通过单一端点访问
-- **按 Workspace 管理** - 每个 Workspace 可以设置不同的 MCP 组合，独立端点 `/w/<slug>`
-- **自动配置客户端** - 自动将 MCP 配置写入各客户端配置文件，支持 Cursor、Claude Desktop、Codex 和 Gemini
+- **集中管控所有 MCP** - 一个地方管理所有工作区的所有 MCP 服务器，告别分散在各个客户端和项目中的配置文件
+- **按 Workspace 管理** - 每个 Workspace 拥有独立的 MCP 组合和端点 `/w/<slug>`，可在控制面板中随时增删或覆盖
+- **自动配置客户端** - Hub 自动将 MCP 配置写入 Cursor、Claude Desktop、Codex 和 Gemini，你再也不需要手动编辑这些配置文件
 - **灵活的实例模式** - 本地 MCP 支持多种实例化模式：`singleton`（全局单例）、`per-workspace`（按工作区）、`per-session`（按会话）
 - **会话监控** - 实时监控每个客户端会话的 MCP 使用情况
 - **Web 控制面板** - 通过 `http://localhost:3000/app` 统一管理
