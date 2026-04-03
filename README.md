@@ -19,13 +19,13 @@ A local hub for centrally managing and orchestrating [Model Context Protocol (MC
 
 | Sessions | MCPs | Workspaces |
 | -------- | ---- | ---------- |
-| Sessions | MCPs | Workspaces |
+| ![Sessions](docs/screenshots/sessions.png) | ![MCPs](docs/screenshots/mcps.png) | ![Workspaces](docs/screenshots/workspaces.png) |
 
 
 
 | Logs | Settings |
 | ---- | -------- |
-| Logs | Settings |
+| ![Logs](docs/screenshots/logs.png) | ![Settings](docs/screenshots/settings.png) |
 
 
 ## Features
@@ -312,13 +312,13 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 
 | 会话       | MCP  | 工作区        |
 | -------- | ---- | ---------- |
-| Sessions | MCPs | Workspaces |
+| ![Sessions](docs/screenshots/sessions.png) | ![MCPs](docs/screenshots/mcps.png) | ![Workspaces](docs/screenshots/workspaces.png) |
 
 
 
 | 日志   | 设置       |
 | ---- | -------- |
-| Logs | Settings |
+| ![Logs](docs/screenshots/logs.png) | ![Settings](docs/screenshots/settings.png) |
 
 
 ## 功能特性
