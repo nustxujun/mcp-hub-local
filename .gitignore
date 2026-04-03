@@ -1,0 +1,29 @@
+node_modules/
+dist/
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp
+*.tmp
+.claude/
+*.tsbuildinfo
+publish.bat
