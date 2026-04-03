@@ -1,6 +1,11 @@
 # MCP Hub Local
 
-**English** | **[中文](#mcp-hub-local-1)**
+[![CI](https://github.com/nustxujun/mcp-hub-local/actions/workflows/ci.yml/badge.svg)](https://github.com/nustxujun/mcp-hub-local/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/mcp-hub-local?color=cb3837&logo=npm)](https://www.npmjs.com/package/mcp-hub-local)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen?logo=node.js)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](./LICENSE)
+
+**English** | [**中文**](#mcp-hub-local-1)
 
 A single hub that takes **full control** of all MCP configurations across every workspace on your machine. Define your MCP servers once, bind them to workspaces, and let the hub automatically manage client configs, runtime lifecycles, and request routing — no more editing scattered JSON files by hand.
 
