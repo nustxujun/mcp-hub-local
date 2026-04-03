@@ -264,6 +264,12 @@ export function McpsPage() {
     await msgbox.alert(JSON.stringify(result, null, 2));
   };
 
+  const handleRestartMcp = async () => {
+    if (!selectedLocalMcp) return;
+    await api.restartMcp(selectedLocalMcp.id);
+    await loadAllInstances();
+  };
+
   const handleDeleteInstance = async (instanceId: number) => {
     await api.deleteRuntimeInstance(instanceId);
     await loadAllInstances();
@@ -409,8 +415,9 @@ export function McpsPage() {
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             {selectedLocalMcp ? (
               <div className="card" style={{ flex: 1 }}>
-                <div className="card-header">
+                <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ fontSize: 16 }}>Instances - {selectedLocalMcp.name}</h3>
+                  <button className="btn btn-ghost btn-sm" onClick={handleRestartMcp}>Restart All</button>
                 </div>
                 {instances.length === 0 ? (
                   <div className="empty-state"><h3>No running instances</h3></div>

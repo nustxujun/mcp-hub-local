@@ -670,34 +670,86 @@ export class McpAggregator {
   // ── MCP config changed: stop old instances, refresh all affected sessions ──
 
   async onMcpConfigChanged(mcpId: number): Promise<void> {
-    // 1. Stop all running instances for this MCP (singleton/per-workspace/per-session)
+    await this.restartMcpInstances(mcpId);
+
+    await this.logService.append({
+      level: 'info',
+      category: 'aggregator',
+      message: `MCP ${mcpId} config changed — restarted affected backends`,
+    });
+  }
+
+  // ── Restart all instances for a specific MCP without breaking other backends ──
+
+  async restartMcpInstances(mcpId: number): Promise<void> {
+    // 1. Stop all running instances for this MCP
     await this.runtimePool.stopByMcpId(mcpId);
 
-    // 2. Find all sessions that use this MCP
+    // 2. Get the latest MCP definition
+    const mcp = await this.registry.getById(mcpId);
+    if (!mcp) return;
+
+    // 3. Collect all affected backends across sessions
     const allSessions = this.sessionStore.all();
-    const affectedWorkspaceIds = new Set<number>();
+    const affected: { session: AggregatedSession; slug: string; backend: BackendEntry }[] = [];
 
     for (const session of allSessions) {
-      for (const [, backend] of session.backends) {
-        if (backend.mcpId === mcpId) {
-          affectedWorkspaceIds.add(session.workspaceId);
-          break;
+      for (const [slug, backend] of session.backends) {
+        if (backend.mcpId !== mcpId) continue;
+
+        // Decrement ref to compensate for the previous initBackend's incrementRef
+        if (backend.mode !== 'per-session') {
+          this.runtimePool.decrementRef(backend.runtimeKey);
         }
+
+        // Reset backend state
+        backend.handle = null;
+        backend.status = 'starting';
+        backend.error = null;
+
+        affected.push({ session, slug, backend });
       }
     }
 
-    // 3. For each affected workspace, restart all its sessions
-    for (const workspaceId of affectedWorkspaceIds) {
-      const sessions = this.sessionStore.getByWorkspace(workspaceId);
-      for (const session of sessions) {
-        await this.restartSession(session.sessionId);
+    // 4. Re-init backends sequentially to avoid duplicate process spawns
+    //    For shared modes (singleton/per-workspace), the first initBackend creates the process,
+    //    subsequent ones reuse it via getOrCreate.
+    for (const { session, slug, backend } of affected) {
+      try {
+        await this.initBackend(session, mcp, backend.mode);
+      } catch (err) {
+        backend.status = 'error';
+        backend.error = String(err);
+        this.logService.append({
+          level: 'error',
+          category: 'aggregator',
+          mcpId: mcp.id,
+          workspaceId: session.workspaceId,
+          sessionId: session.sessionId,
+          message: `Failed to restart backend ${slug}: ${err}`,
+        });
+      }
+      // After each backend, invalidate caches and notify
+      session.cachedTools = null;
+      session.cachedResources = null;
+      session.cachedPrompts = null;
+      this.pushToolsListChanged(session);
+    }
+
+    // 5. For local MCPs, always ensure a singleton instance exists
+    //    (even when no sessions are active, so the process stays warm)
+    if (mcp.transportKind === 'stdio') {
+      try {
+        await this.runtimePool.startAndInitialize(mcp);
+      } catch {
+        // Non-fatal: will be started on next session connect
       }
     }
 
     await this.logService.append({
       level: 'info',
       category: 'aggregator',
-      message: `MCP ${mcpId} config changed — restarted sessions in ${affectedWorkspaceIds.size} workspace(s)`,
+      message: `MCP ${mcpId} instances restarted — re-initialized ${affected.length} backend(s)`,
     });
   }
 

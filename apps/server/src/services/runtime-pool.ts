@@ -386,7 +386,7 @@ export class RuntimePoolService {
     }
   }
 
-  /** Stop all running instances for a specific MCP. */
+  /** Stop all running instances for a specific MCP and clean up old DB records. */
   async stopByMcpId(mcpId: number): Promise<void> {
     const keys = [...this.handles.entries()]
       .filter(([, h]) => h.mcpId === mcpId)
@@ -394,6 +394,16 @@ export class RuntimePoolService {
     for (const key of keys) {
       await this.stop(key);
     }
+    // Remove stopped/error records for this MCP so they don't pile up
+    this.db.delete(schema.runtimeInstances)
+      .where(
+        and(
+          eq(schema.runtimeInstances.mcpId, mcpId),
+          ne(schema.runtimeInstances.status, 'running'),
+          ne(schema.runtimeInstances.status, 'starting'),
+        )
+      )
+      .run();
   }
 
   listHandles(): RuntimeHandle[] {

@@ -143,6 +143,19 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
     }
   });
 
+  app.post('/api/mcps/:id/restart', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcp = await registry.getById(parseInt(id));
+    if (!mcp) {
+      return reply.status(404).send({ error: 'MCP not found' });
+    }
+    if (mcp.transportKind !== 'stdio') {
+      return reply.status(400).send({ error: 'Only local MCPs can be restarted' });
+    }
+    await aggregator.restartMcpInstances(mcp.id);
+    return { ok: true };
+  });
+
   // ── Runtime Instances ──
 
   app.get('/api/runtime-instances', async () => {

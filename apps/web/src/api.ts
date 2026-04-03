@@ -25,6 +25,7 @@ export const updateMcp = (id: number, data: any) => request<any>(`/api/mcps/${id
 export const deleteMcp = (id: number) => request<void>(`/api/mcps/${id}`, { method: 'DELETE' });
 export const testMcp = (id: number) => request<any>(`/api/mcps/${id}/test`, { method: 'POST' });
 export const startMcp = (id: number) => request<any>(`/api/mcps/${id}/start`, { method: 'POST' });
+export const restartMcp = (id: number) => request<any>(`/api/mcps/${id}/restart`, { method: 'POST' });
 export const batchTestMcps = () => request<Record<number, { ok: boolean; status?: number; error?: string }>>('/api/mcps/batch-test');
 export const getHealthStatus = () => request<Record<number, { ok: boolean; status?: number; error?: string; checkedAt?: string }>>('/api/mcps/health');
 export const listRuntimeInstances = () => request<any[]>('/api/runtime-instances');
