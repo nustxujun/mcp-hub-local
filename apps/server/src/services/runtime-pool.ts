@@ -28,21 +28,9 @@ export class RuntimePoolService {
     private db: HubDatabase,
     private logService: LogService,
   ) {
-    // On startup, mark any leftover running/starting instances from a previous
-    // server process as stopped (they no longer have a live process).
-    this.db.update(schema.runtimeInstances)
-      .set({ status: 'stopped', endedAt: new Date().toISOString() })
-      .where(
-        and(
-          ne(schema.runtimeInstances.status, 'stopped'),
-          ne(schema.runtimeInstances.status, 'error'),
-        )
-      )
-      .run();
-    // Clean up error instances from previous runs
-    this.db.delete(schema.runtimeInstances)
-      .where(eq(schema.runtimeInstances.status, 'error'))
-      .run();
+    // On startup, clean up all instances from previous server processes
+    // — they no longer have live processes and their status is stale.
+    this.db.delete(schema.runtimeInstances).run();
   }
 
   private instanceKey(mcpId: number, mode: InstanceMode, workspaceId?: number | null, sessionId?: string | null): string {
