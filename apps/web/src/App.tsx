@@ -4,6 +4,7 @@ import { McpsPage } from './pages/McpsPage';
 import { WorkspacesPage } from './pages/WorkspacesPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { LogsPage } from './pages/LogsPage';
+import { StatsPage } from './pages/StatsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { MessageBoxProvider } from './components/MessageBox';
 import './App.css';
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/mcps', label: 'MCPs' },
   { to: '/workspaces', label: 'Workspaces' },
   { to: '/logs', label: 'Logs' },
+  { to: '/stats', label: 'Stats' },
   { to: '/settings', label: 'Settings' },
 ];
 
@@ -45,6 +47,7 @@ export function App() {
             <Route path="/mcps" element={<McpsPage />} />
             <Route path="/workspaces" element={<WorkspacesPage />} />
             <Route path="/logs" element={<LogsPage />} />
+            <Route path="/stats" element={<StatsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </main>

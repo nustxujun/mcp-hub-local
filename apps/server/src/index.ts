@@ -15,6 +15,7 @@ import { RuntimePoolService } from './services/runtime-pool.js';
 import { McpAggregator, AggregatedHandler, SessionStore } from './services/aggregator/index.js';
 import { ConfigSyncService } from './services/config-sync.js';
 import { HealthCheckService } from './services/health-check.js';
+import { StatsService } from './services/stats.js';
 
 import { registerMcpRoutes } from './routes/mcps.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
@@ -22,6 +23,7 @@ import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { registerLogRoutes } from './routes/logs.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { registerSessionRoutes } from './routes/sessions.js';
+import { registerStatsRoutes } from './routes/stats.js';
 import { ConfigIOService } from './services/config-io.js';
 import { DEFAULT_PORT } from '@mcp-hub-local/shared';
 
@@ -80,8 +82,9 @@ async function main() {
   const runtimePool = new RuntimePoolService(db, logService);
   const configSync = new ConfigSyncService(workspaceService, registry, settingsService, logService);
   const healthCheck = new HealthCheckService(registry);
+  const statsService = new StatsService(db);
   const sessionStore = new SessionStore();
-  const aggregator = new McpAggregator(sessionStore, runtimePool, workspaceService, registry, logService);
+  const aggregator = new McpAggregator(sessionStore, runtimePool, workspaceService, registry, logService, statsService);
   const configIO = new ConfigIOService(registry, workspaceService, runtimePool, aggregator);
   const handler = new AggregatedHandler(aggregator);
 
@@ -110,6 +113,7 @@ async function main() {
   registerLogRoutes(app, logService);
   registerSettingsRoutes(app, settingsService, configSync, configIO);
   registerSessionRoutes(app, aggregator);
+  registerStatsRoutes(app, statsService);
 
   app.all('/w/:workspaceSlug', async (request, reply) => {
     return handler.handleRequest(

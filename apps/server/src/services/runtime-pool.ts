@@ -15,6 +15,8 @@ export interface RuntimeHandle {
   process: ChildProcess | null;
   remoteUrl: string | null;
   remoteHeaders: Record<string, string>;
+  /** Queue to serialize requests to the same stdio process. */
+  _requestQueue?: Promise<any>;
 }
 
 export class RuntimePoolService {
@@ -292,7 +294,7 @@ export class RuntimePoolService {
    * Send a JSON-RPC message to a stdio handle and wait for the matching response (by id).
    * For notifications (no id), fire-and-forget.
    */
-  async sendJsonRpc(handle: RuntimeHandle, message: object, timeoutMs = 30000): Promise<object | null> {
+  async sendJsonRpc(handle: RuntimeHandle, message: object, timeoutMs = 300000): Promise<object | null> {
     const msg = message as { id?: number | string; method?: string };
 
     if (handle.remoteUrl) {
@@ -315,13 +317,23 @@ export class RuntimePoolService {
       });
     }
 
+    // Queue requests per handle so they run serially.
+    // This ensures durationMs reflects actual execution time, not queue wait.
+    const prev = handle._requestQueue ?? Promise.resolve();
+    const task = prev.catch(() => {}).then(() => this._doSendJsonRpc(handle, jsonStr, msg.id!, timeoutMs));
+    handle._requestQueue = task;
+    return task;
+  }
+
+  private _doSendJsonRpc(handle: RuntimeHandle, jsonStr: string, id: number | string, timeoutMs: number): Promise<object> {
     return new Promise<object>((resolve, reject) => {
-      let buf = '';
       const timeout = setTimeout(() => {
         handle.stdout!.removeListener('data', onData);
         reject(new Error(`JSON-RPC timeout after ${timeoutMs}ms`));
       }, timeoutMs);
 
+      let buf = '';
+      let writeTime = 0;
       const onData = (data: Buffer) => {
         buf += data.toString('utf-8');
         const lines = buf.split('\n');
@@ -330,9 +342,10 @@ export class RuntimePoolService {
           if (!line) continue;
           try {
             const parsed = JSON.parse(line);
-            if (parsed.id === msg.id) {
+            if (parsed.id === id) {
               clearTimeout(timeout);
               handle.stdout!.removeListener('data', onData);
+              parsed._rpcDurationMs = writeTime > 0 ? Date.now() - writeTime : undefined;
               resolve(parsed);
               return;
             }
@@ -350,6 +363,7 @@ export class RuntimePoolService {
           handle.stdout!.removeListener('data', onData);
           reject(err);
         }
+        writeTime = Date.now();
       });
     });
   }

@@ -59,3 +59,20 @@ export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   valueJson: text('value_json').notNull(),
 });
+
+export const toolCalls = sqliteTable('tool_calls', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  timestamp: text('timestamp').notNull().$defaultFn(() => new Date().toISOString()),
+  sessionId: text('session_id'),
+  workspaceId: integer('workspace_id'),
+  mcpId: integer('mcp_id'),
+  mcpSlug: text('mcp_slug').notNull(),
+  toolName: text('tool_name').notNull(),
+  success: integer('success', { mode: 'boolean' }).notNull(),
+  durationMs: integer('duration_ms').notNull(),
+  requestSize: integer('request_size').notNull(),
+  responseSize: integer('response_size').notNull(),
+  error: text('error'),
+  requestBody: text('request_body'),
+  responseBody: text('response_body'),
+});

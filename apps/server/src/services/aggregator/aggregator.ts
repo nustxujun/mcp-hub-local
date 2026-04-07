@@ -3,6 +3,7 @@ import type { RuntimePoolService } from '../runtime-pool.js';
 import type { WorkspaceService } from '../workspace.js';
 import type { McpRegistryService } from '../mcp-registry.js';
 import type { LogService } from '../log.js';
+import type { StatsService } from '../stats.js';
 import { SessionStore, type AggregatedSession, type BackendEntry, type BackendStatus } from './session-store.js';
 import { prefixName, parsePrefixedName } from './name-mapper.js';
 
@@ -13,6 +14,7 @@ export class McpAggregator {
     private workspaceService: WorkspaceService,
     private registry: McpRegistryService,
     private logService: LogService,
+    private statsService: StatsService,
   ) {}
 
   // ── Protocol: initialize ──
@@ -364,22 +366,48 @@ export class McpAggregator {
       return { jsonrpc: '2.0', id, error: { code: -32602, message: `Invalid tool name: ${params.name}` } };
     }
 
+    const startTime = Date.now();
+    const requestStr = JSON.stringify(params.arguments || {});
+    const requestSize = requestStr.length;
+
+    const recordStats = (success: boolean, responseSize: number, rpcDurationMs?: number, responseStr?: string, error?: string) => {
+      const backend = session.backends.get(mcpSlug);
+      this.statsService.record({
+        sessionId: session.sessionId,
+        workspaceId: session.workspaceId,
+        mcpId: backend?.mcpId ?? null,
+        mcpSlug,
+        toolName: originalName,
+        success,
+        durationMs: rpcDurationMs ?? (Date.now() - startTime),
+        requestSize,
+        responseSize,
+        error,
+        requestBody: requestStr,
+        responseBody: responseStr ?? null,
+      });
+    };
+
     const backend = session.backends.get(mcpSlug);
     if (!backend) {
-      return { jsonrpc: '2.0', id, error: { code: -32602, message: `Backend not found: ${mcpSlug}` } };
+      const resp = { jsonrpc: '2.0', id, error: { code: -32602, message: `Backend not found: ${mcpSlug}` } };
+      recordStats(false, 0, undefined, undefined, resp.error.message);
+      return resp;
     }
     if (backend.status !== 'running' || !backend.handle) {
-      return { jsonrpc: '2.0', id, error: { code: -32002, message: `Backend not ready: ${mcpSlug} (${backend.status})` } };
+      const resp = { jsonrpc: '2.0', id, error: { code: -32002, message: `Backend not ready: ${mcpSlug} (${backend.status})` } };
+      recordStats(false, 0, undefined, undefined, resp.error.message);
+      return resp;
     }
 
-    await this.logService.append({
+    this.logService.append({
       level: 'debug',
       category: 'aggregator-call',
       mcpId: backend.mcpId,
       workspaceId: session.workspaceId,
       sessionId: session.sessionId,
       message: `→ tools/call ${mcpSlug}::${originalName}`,
-    });
+    }).catch(() => { /* fire-and-forget: debug log should not block tool execution timing */ });
 
     try {
       const callId = Date.now() + Math.floor(Math.random() * 100000);
@@ -391,17 +419,26 @@ export class McpAggregator {
           name: originalName,
           arguments: params.arguments || {},
         },
-      }, 30000) as any;
+      }, 300000) as any;
 
       // Rewrite the response with the aggregator's request id
       if (response?.result !== undefined) {
+        const resultStr = JSON.stringify(response.result);
+        const rpcMs = response._rpcDurationMs as number | undefined;
+        recordStats(true, resultStr.length, rpcMs, resultStr);
         return { jsonrpc: '2.0', id, result: response.result };
       }
       if (response?.error) {
+        const errorStr = JSON.stringify(response.error);
+        const rpcMs = response._rpcDurationMs as number | undefined;
+        recordStats(false, errorStr.length, rpcMs, errorStr, response.error.message || 'Backend error');
         return { jsonrpc: '2.0', id, error: response.error };
       }
+      const fallbackStr = JSON.stringify(response?.result ?? {});
+      recordStats(true, fallbackStr.length, undefined, fallbackStr);
       return { jsonrpc: '2.0', id, result: response?.result ?? {} };
     } catch (err) {
+      recordStats(false, 0, undefined, undefined, String(err));
       return { jsonrpc: '2.0', id, error: { code: -32603, message: `Backend call failed: ${err}` } };
     }
   }

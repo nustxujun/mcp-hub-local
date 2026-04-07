@@ -59,6 +59,17 @@ export const queryLogs = (params?: Record<string, string>) => {
 };
 export const clearLogs = () => request<void>('/api/logs', { method: 'DELETE' });
 
+// ── Stats ──
+export const getStatsSummary = () => request<any>('/api/stats/summary');
+export const getToolStats = (params?: Record<string, string>) => {
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return request<any[]>(`/api/stats/tools${qs}`);
+};
+export const getMcpStats = () => request<any[]>('/api/stats/mcps');
+export const getRecentCalls = (limit = 20) => request<any[]>(`/api/stats/recent?limit=${limit}`);
+export const getSlowestCalls = () => request<any[]>('/api/stats/slowest');
+export const clearStats = () => request<void>('/api/stats', { method: 'DELETE' });
+
 // ── Settings ──
 export const getSettings = () => request<any>('/api/settings');
 export const patchSettings = (data: any) => request<any>('/api/settings', { method: 'PATCH', body: JSON.stringify(data) });
