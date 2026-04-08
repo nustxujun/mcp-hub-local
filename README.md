@@ -218,6 +218,16 @@ Toggle **PTC (Programmatic Tool Calling)** in the Settings page. Enabled by defa
 
 > **Note**: Existing sessions need to reconnect after toggling. Requires Python 3 installed on the system.
 
+### Known Limitations
+
+PTC relies on tool descriptions to instruct the AI to follow a strict workflow: **search first → then execute in one script**. In practice, AI models do not always comply — common deviations include:
+
+- Skipping `search_tools` and calling `execute_code` directly with guessed function names
+- Calling `execute_code` multiple times for a single task instead of combining everything into one script
+- Not searching thoroughly enough, missing relevant tools
+
+These are inherent limitations of prompt-based control. Different models vary in compliance, and there is currently no mechanism to enforce the workflow at the protocol level.
+
 ## API Reference
 
 **MCPs**
@@ -562,6 +572,16 @@ AI 客户端                        Hub                         MCP 服务器
 在 Settings 页面中切换 **PTC (Programmatic Tool Calling)** 开关即可，默认开启。
 
 > **注意**：切换后已有会话需要重新连接才能生效。需要系统安装 Python 3。
+
+### 已知局限
+
+PTC 依赖工具描述中的提示词来指导 AI 严格遵循 **先搜索 → 再一次性执行** 的工作流程。但在实际使用中，AI 模型并不总是严格遵守，常见的偏离行为包括：
+
+- 跳过 `search_tools`，直接凭猜测的函数名调用 `execute_code`
+- 对同一个任务多次调用 `execute_code`，而非将所有逻辑合并到一个脚本中
+- 搜索不够充分，遗漏相关工具
+
+这是基于提示词控制的固有局限。不同模型的遵从程度各异，目前尚无协议层面的机制来强制执行该工作流。
 
 ## API 参考
 
