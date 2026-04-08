@@ -11,6 +11,7 @@ export function SettingsPage() {
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
+  const [shuttingDown, setShuttingDown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -56,6 +57,18 @@ export function SettingsPage() {
       await api.clearLogs();
     } finally {
       setClearingLogs(false);
+    }
+  };
+
+  const handleShutdown = async () => {
+    if (!window.confirm('Are you sure you want to shut down the server? You will need to restart it manually.')) return;
+    setShuttingDown(true);
+    try {
+      await api.shutdownServer();
+    } catch {
+      // Server may close connection before responding — that's expected
+    } finally {
+      setShuttingDown(false);
     }
   };
 
@@ -232,6 +245,17 @@ export function SettingsPage() {
             {importStatus.message}
           </p>
         )}
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontSize: 16, marginBottom: 16 }}>Server</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
+          Gracefully shut down the hub server. All running MCPs will be stopped and connections closed.
+        </p>
+        <button className="btn btn-danger" onClick={handleShutdown} disabled={shuttingDown}>
+          {shuttingDown ? 'Shutting down...' : 'Shutdown Server'}
+        </button>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>Requires manual restart</span>
       </div>
 
       <button className="btn btn-primary" onClick={handleSave} disabled={saving}>

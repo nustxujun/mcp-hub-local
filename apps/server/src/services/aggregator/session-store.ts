@@ -1,7 +1,7 @@
 import type { ServerResponse } from 'node:http';
 import type { InstanceMode } from '@mcp-hub-local/shared';
 import type { RuntimeHandle } from '../runtime-pool.js';
-import type { ToolSignatureEntry } from './ptc.js';
+import type { ToolSignatureEntry, ToolIndexEntry } from './ptc.js';
 
 export type BackendStatus = 'starting' | 'running' | 'error';
 
@@ -32,6 +32,7 @@ export interface AggregatedSession {
   backends: Map<string, BackendEntry>;  // key = mcpSlug
   cachedTools: any[] | null;
   cachedToolSignatures: ToolSignatureEntry[] | null;
+  cachedSearchIndex: ToolIndexEntry[] | null;
   cachedResources: any[] | null;
   cachedPrompts: any[] | null;
   initialized: boolean;
@@ -54,6 +55,7 @@ export class SessionStore {
       backends: new Map(),
       cachedTools: null,
       cachedToolSignatures: null,
+      cachedSearchIndex: null,
       cachedResources: null,
       cachedPrompts: null,
       initialized: false,

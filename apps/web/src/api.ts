@@ -79,6 +79,7 @@ export const clearStats = () => request<void>('/api/stats', { method: 'DELETE' }
 export const getSettings = () => request<any>('/api/settings');
 export const patchSettings = (data: any) => request<any>('/api/settings', { method: 'PATCH', body: JSON.stringify(data) });
 export const getSettingsInfo = () => request<{ dataDir: string }>('/api/settings/info');
+export const shutdownServer = () => request<{ ok: boolean }>('/api/shutdown', { method: 'POST' });
 
 // ── Config Import / Export ──
 export const exportConfig = () => request<any>('/api/config/export');

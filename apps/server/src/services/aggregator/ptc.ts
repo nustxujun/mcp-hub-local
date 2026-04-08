@@ -27,7 +27,15 @@ export const HUB_TOOLS_DEFINITIONS = [
       properties: {
         filter: {
           type: 'string',
-          description: 'Keyword to filter tools by name, description, or MCP slug. Supports space-separated multiple keywords (AND match). Call multiple times with different keywords to build a complete picture before writing code.',
+          description: [
+            'Keyword to filter tools by name, description, or MCP slug.',
+            'Supports space-separated multiple keywords with smart ranking:',
+            '  - Tools matching ALL keywords rank highest (AND mode, score ×2)',
+            '  - Tools matching SOME keywords also returned but ranked lower (OR fallback)',
+            '  - Scoring priority: tool name exact word > MCP slug exact word > name substring > slug substring > description word > description substring',
+            'Tips: Use specific tool names or capability keywords (e.g. "read file", "list", "query database").',
+            'Call multiple times with different keywords to build a complete picture before writing code.',
+          ].join(' '),
         },
       },
       required: ['filter'],
@@ -93,6 +101,33 @@ export interface ToolSignatureEntry {
   description: string;
   /** The safe function name used in code execution context */
   functionName: string;
+}
+
+export interface SearchResult {
+  /** Matched tool entries, sorted by relevance (best first) */
+  entries: ToolSignatureEntry[];
+  /** Number of results where ALL keywords matched */
+  exactCount: number;
+  /** Number of results where only SOME keywords matched */
+  partialCount: number;
+}
+
+/** Pre-processed search index entry for a single tool (built once, queried many times) */
+export interface ToolIndexEntry {
+  /** Reference to the original signature */
+  sig: ToolSignatureEntry;
+  /** originalName split by '_', lowercased */
+  nameParts: string[];
+  /** mcpSlug split by '-', lowercased */
+  slugParts: string[];
+  /** originalName lowercased (for substring search) */
+  nameLower: string;
+  /** mcpSlug lowercased (for substring search) */
+  slugLower: string;
+  /** description lowercased, punctuation stripped, split by whitespace (Set for O(1) exact word lookup) */
+  descWordSet: Set<string>;
+  /** description lowercased (for substring search) */
+  descLower: string;
 }
 
 // ── Python interpreter detection ──
@@ -221,15 +256,115 @@ export class PTCService {
     return tools.map(tool => this.generateSignature(tool, mcpSlug));
   }
 
-  /** Search tools by filter keywords (space-separated AND match, case-insensitive) */
-  searchTools(signatures: ToolSignatureEntry[], filter: string): ToolSignatureEntry[] {
-    if (!filter || !filter.trim()) return signatures;
+  /** Build a pre-processed search index from signatures (call once when cache is populated) */
+  buildSearchIndex(signatures: ToolSignatureEntry[]): ToolIndexEntry[] {
+    return signatures.map(sig => ({
+      sig,
+      nameParts: sig.originalName.toLowerCase().split('_'),
+      slugParts: sig.mcpSlug.toLowerCase().split('-'),
+      nameLower: sig.originalName.toLowerCase(),
+      slugLower: sig.mcpSlug.toLowerCase(),
+      descWordSet: new Set(sig.description.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/).filter(Boolean)),
+      descLower: sig.description.toLowerCase(),
+    }));
+  }
+
+  /**
+   * Search tools by filter keywords with intelligent scoring using a pre-built index.
+   *
+   * Scoring rules (per keyword per tool):
+   *   - Exact word match in originalName (split by _):  20
+   *   - Exact word match in mcpSlug (split by -):       15
+   *   - Substring match in originalName:                10
+   *   - Substring match in mcpSlug:                      8
+   *   - Exact word match in description:                 5
+   *   - Substring match in description:                  3
+   *
+   * AND/OR hybrid:
+   *   - If ALL keywords match → total score ×2 (AND bonus)
+   *   - Partial matches also returned but ranked lower
+   *   - Partial matches capped at 5 to avoid flooding context
+   *   - Results sorted by descending score
+   */
+  searchTools(index: ToolIndexEntry[], filter: string): SearchResult {
+    if (!filter || !filter.trim()) {
+      return { entries: index.map(e => e.sig), exactCount: 0, partialCount: 0 };
+    }
 
     const keywords = filter.toLowerCase().split(/\s+/).filter(Boolean);
-    return signatures.filter(entry => {
-      const haystack = `${entry.prefixedName} ${entry.description} ${entry.mcpSlug} ${entry.originalName}`.toLowerCase();
-      return keywords.every(kw => haystack.includes(kw));
+
+    const scored: Array<{ sig: ToolSignatureEntry; score: number; allMatch: boolean }> = [];
+
+    for (const entry of index) {
+      let totalScore = 0;
+      let matchedCount = 0;
+
+      for (const kw of keywords) {
+        let kwScore = 0;
+
+        // 1. Exact word match in originalName parts (highest priority)
+        if (entry.nameParts.includes(kw)) {
+          kwScore = 20;
+        }
+        // 2. Exact word match in mcpSlug parts
+        if (kwScore < 15 && entry.slugParts.includes(kw)) {
+          kwScore = 15;
+        }
+        // 3. Substring match in originalName
+        if (kwScore < 10 && entry.nameLower.includes(kw)) {
+          kwScore = 10;
+        }
+        // 4. Substring match in mcpSlug
+        if (kwScore < 8 && entry.slugLower.includes(kw)) {
+          kwScore = 8;
+        }
+        // 5. Exact word match in description
+        if (kwScore < 5 && entry.descWordSet.has(kw)) {
+          kwScore = 5;
+        }
+        // 6. Substring match in description
+        if (kwScore < 3 && entry.descLower.includes(kw)) {
+          kwScore = 3;
+        }
+
+        if (kwScore > 0) {
+          matchedCount++;
+        }
+        totalScore += kwScore;
+      }
+
+      if (totalScore === 0) continue;
+
+      const allMatch = matchedCount === keywords.length;
+      // AND bonus: if all keywords matched, double the score
+      if (allMatch) {
+        totalScore *= 2;
+      }
+
+      scored.push({ sig: entry.sig, score: totalScore, allMatch });
+    }
+
+    // Sort: AND matches first, then by score descending
+    scored.sort((a, b) => {
+      if (a.allMatch !== b.allMatch) return a.allMatch ? -1 : 1;
+      return b.score - a.score;
     });
+
+    const exactCount = scored.filter(s => s.allMatch).length;
+    const partialCount = scored.filter(s => !s.allMatch).length;
+
+    // Cap partial matches to avoid flooding AI context
+    const MAX_PARTIAL = 5;
+    let entries: ToolSignatureEntry[];
+    if (partialCount > MAX_PARTIAL) {
+      const exactEntries = scored.filter(s => s.allMatch).map(s => s.sig);
+      const partialEntries = scored.filter(s => !s.allMatch).slice(0, MAX_PARTIAL).map(s => s.sig);
+      entries = [...exactEntries, ...partialEntries];
+    } else {
+      entries = scored.map(s => s.sig);
+    }
+
+    return { entries, exactCount, partialCount: Math.min(partialCount, MAX_PARTIAL) };
   }
 
   /** Execute Python code in a child process with injected tool call functions via stdin/stdout JSON line protocol */

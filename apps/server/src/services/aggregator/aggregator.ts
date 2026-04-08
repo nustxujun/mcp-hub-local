@@ -153,6 +153,7 @@ export class McpAggregator {
       // After each backend finishes (success or error), invalidate caches and notify
       session.cachedTools = null;
       session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
       this.pushToolsListChanged(session);
@@ -417,6 +418,7 @@ export class McpAggregator {
         );
       });
       session.cachedToolSignatures = signatures;
+      session.cachedSearchIndex = this.ptcService.buildSearchIndex(signatures);
 
       const exposedMap = await this.getExposedToolsMap();
       const exposedTools = this.filterExposedTools(allTools, exposedMap, session);
@@ -560,7 +562,12 @@ export class McpAggregator {
     if (toolName === HUB_TOOL_SEARCH) {
       const filter = args.filter || '';
       const signatures = session.cachedToolSignatures || [];
-      const matches = this.ptcService.searchTools(signatures, filter);
+      const searchIndex = session.cachedSearchIndex ?? (() => {
+        const idx = this.ptcService.buildSearchIndex(signatures);
+        session.cachedSearchIndex = idx;
+        return idx;
+      })();
+      const { entries: matches, exactCount, partialCount } = this.ptcService.searchTools(searchIndex, filter);
 
       // Pinned tools always appear in results
       const pinnedMap = await this.getPinnedToolsMap();
@@ -576,7 +583,11 @@ export class McpAggregator {
 
       // Build plain text output
       const pinnedLabel = pinnedOnly.length > 0 ? `\n[${pinnedOnly.length} pinned tool(s) always shown]\n` : '';
-      const header = `Found ${matches.length} of ${signatures.length} tools${pinnedLabel}`;
+      // Only show exact/partial breakdown when multi-keyword search produces both types
+      const matchDetail = (exactCount > 0 && partialCount > 0)
+        ? ` (${exactCount} exact, ${partialCount} partial)`
+        : '';
+      const header = `Found ${matches.length} of ${signatures.length} tools${matchDetail}${pinnedLabel}`;
       const body = merged.map(entry => entry.signature).join('\n\n');
       const text = body ? `${header}\n\n${body}` : header;
 
@@ -830,6 +841,7 @@ export class McpAggregator {
     for (const session of this.sessionStore.all()) {
       session.cachedTools = null;
       session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
       this.pushToolsListChanged(session);
     }
   }
@@ -975,6 +987,7 @@ export class McpAggregator {
       // After each backend, invalidate caches and notify
       session.cachedTools = null;
       session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
       this.pushToolsListChanged(session);
@@ -1075,6 +1088,7 @@ export class McpAggregator {
             .finally(() => {
               session.cachedTools = null;
               session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
               session.cachedResources = null;
               session.cachedPrompts = null;
               this.pushToolsListChanged(session);
@@ -1085,6 +1099,7 @@ export class McpAggregator {
       // 3. Clear caches
       session.cachedTools = null;
       session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
 

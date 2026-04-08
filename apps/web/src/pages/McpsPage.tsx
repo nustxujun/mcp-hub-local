@@ -643,7 +643,7 @@ export function McpsPage() {
                                     <td style={{ padding: '6px 8px' }}>
                                       <div style={{ fontSize: 13, fontWeight: 600 }}>{tool.name}</div>
                                       {tool.description && (
-                                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, maxHeight: 36, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                                           {tool.description}
                                         </div>
                                       )}
@@ -792,7 +792,7 @@ export function McpsPage() {
                           <td style={{ padding: '8px 12px' }}>
                             <div style={{ fontSize: 13, fontWeight: 600 }}>{tool.name}</div>
                             {tool.description && (
-                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, maxHeight: 40, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                                 {tool.description}
                               </div>
                             )}
