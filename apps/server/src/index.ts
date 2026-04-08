@@ -310,6 +310,8 @@ async function main() {
     healthCheck.stop();
     await runtimePool.stopAll();
     await app.close();
+    // Flush WAL to main db and release -wal/-shm files before closing
+    sqlite.pragma('wal_checkpoint(TRUNCATE)');
     sqlite.close();
     process.exit(0);
   };
