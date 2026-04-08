@@ -3,7 +3,7 @@ import cors from '@fastify/cors';
 import fstatic from '@fastify/static';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createDatabase } from './db/index.js';
 import { runMigrations } from './db/migrate.js';
@@ -30,9 +30,9 @@ import { DEFAULT_PORT } from '@mcp-hub-local/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function parseArgs(): { port?: number; config?: string } {
+function parseArgs(): { port?: number; config?: string; daemon?: boolean } {
   const args = process.argv.slice(2);
-  const result: { port?: number; config?: string } = {};
+  const result: { port?: number; config?: string; daemon?: boolean } = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       result.port = parseInt(args[i + 1]);
@@ -40,9 +40,25 @@ function parseArgs(): { port?: number; config?: string } {
     } else if (args[i] === '--config' && args[i + 1]) {
       result.config = args[i + 1];
       i++;
+    } else if (args[i] === '--daemon') {
+      result.daemon = true;
     }
   }
   return result;
+}
+
+function daemonize(): never {
+  // Re-spawn ourselves without --daemon, detached and with stdio ignored.
+  const args = process.argv.slice(2).filter(a => a !== '--daemon');
+  const child = spawn(process.argv[0], [process.argv[1], ...args], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: process.cwd(),
+    env: process.env,
+  });
+  child.unref();
+  console.log(`mcp-hub-local daemonized (pid=${child.pid})`);
+  process.exit(0);
 }
 
 const APP_IDENTIFIER = 'mcp-hub-local';
@@ -161,6 +177,10 @@ async function killPreviousInstance(newPort: number, log: any): Promise<void> {
 async function main() {
   const cliArgs = parseArgs();
 
+  if (cliArgs.daemon) {
+    daemonize();
+  }
+
   const { db, sqlite } = createDatabase();
   runMigrations(sqlite);
 
@@ -198,8 +218,8 @@ async function main() {
   const healthCheck = new HealthCheckService(registry);
   const statsService = new StatsService(db);
   const sessionStore = new SessionStore();
-  const aggregator = new McpAggregator(sessionStore, runtimePool, workspaceService, registry, logService, statsService);
-  const configIO = new ConfigIOService(registry, workspaceService, runtimePool, aggregator);
+  const aggregator = new McpAggregator(sessionStore, runtimePool, workspaceService, registry, logService, statsService, settingsService, db);
+  const configIO = new ConfigIOService(registry, workspaceService, runtimePool, aggregator, db);
   const handler = new AggregatedHandler(aggregator);
 
   // CLI: import config file on startup
@@ -222,7 +242,7 @@ async function main() {
     }
   }
 
-  registerMcpRoutes(app, registry, healthCheck, runtimePool, aggregator);
+  registerMcpRoutes(app, registry, healthCheck, runtimePool, aggregator, db);
   registerWorkspaceRoutes(app, workspaceService, registry, configSync, settingsService, aggregator);
   registerLogRoutes(app, logService);
   registerSettingsRoutes(app, settingsService, configSync, configIO);

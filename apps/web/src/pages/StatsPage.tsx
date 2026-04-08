@@ -51,6 +51,7 @@ interface RecentCall {
   requestSize: number;
   responseSize: number;
   error: string | null;
+  requestBody?: string | null;
 }
 
 type Tab = 'mcp' | 'tool' | 'recent' | 'slowest';
@@ -70,16 +71,64 @@ function formatJson(raw: string | null | undefined): string {
   if (!raw) return '(empty)';
   try {
     const obj = JSON.parse(raw);
-    // JSON.stringify escapes \n back to \\n in string values.
-    // We use a custom replacer: stringify first, then unescape \\n \\t within quoted strings.
     const pretty = JSON.stringify(obj, null, 2);
-    // Replace \\n and \\t only inside JSON string values (between quotes)
     return pretty.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
       return match.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
     });
   } catch {
     return raw;
   }
+}
+
+const jsonTokenRegex = /("(?:[^"\\]|\\.)*")\s*:|("(?:[^"\\]|\\.)*")|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b|(true|false|null)\b|([{}[\]:,])/g;
+
+function JsonHighlight({ raw }: { raw: string | null | undefined }) {
+  if (!raw) return <span style={{ color: 'var(--text-muted)' }}>(empty)</span>;
+
+  let pretty: string;
+  try {
+    const obj = JSON.parse(raw);
+    pretty = JSON.stringify(obj, null, 2);
+    pretty = pretty.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+      return match.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    });
+  } catch {
+    return <span>{raw}</span>;
+  }
+
+  const elements: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  jsonTokenRegex.lastIndex = 0;
+  while ((match = jsonTokenRegex.exec(pretty)) !== null) {
+    if (match.index > lastIndex) {
+      elements.push(pretty.slice(lastIndex, match.index));
+    }
+    if (match[1]) {
+      // key (quoted string followed by colon)
+      elements.push(<span key={key++} style={{ color: 'var(--accent, #a78bfa)' }}>{match[1]}</span>);
+    } else if (match[2]) {
+      // string value
+      elements.push(<span key={key++} style={{ color: '#22c55e' }}>{match[2]}</span>);
+    } else if (match[3]) {
+      // number
+      elements.push(<span key={key++} style={{ color: '#f59e0b' }}>{match[3]}</span>);
+    } else if (match[4]) {
+      // boolean / null
+      elements.push(<span key={key++} style={{ color: '#ef4444' }}>{match[4]}</span>);
+    } else if (match[5]) {
+      // punctuation
+      elements.push(<span key={key++} style={{ color: 'var(--text-muted)' }}>{match[5]}</span>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < pretty.length) {
+    elements.push(pretty.slice(lastIndex));
+  }
+
+  return <>{elements}</>;
 }
 
 export function StatsPage() {
@@ -91,6 +140,7 @@ export function StatsPage() {
   const [slowestCalls, setSlowestCalls] = useState<any[]>([]);
   const [tab, setTab] = useState<Tab>('mcp');
   const [clearing, setClearing] = useState(false);
+  const [expandedCallId, setExpandedCallId] = useState<number | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -293,23 +343,36 @@ export function StatsPage() {
                 </thead>
                 <tbody>
                   {recentCalls.map(c => (
-                    <tr key={c.id}>
-                      <td style={{ color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>{new Date(c.timestamp).toLocaleTimeString()}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{c.mcpSlug}</td>
-                      <td><strong>{c.toolName}</strong></td>
-                      <td>
-                        {c.success
-                          ? <span className="badge badge-success">ok</span>
-                          : <span className="badge badge-error">fail</span>
-                        }
-                      </td>
-                      <td style={{ textAlign: 'right' }}>{formatMs(c.durationMs)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatBytes(c.requestSize)}</td>
-                      <td style={{ textAlign: 'right' }}>{formatBytes(c.responseSize)}</td>
-                      <td style={{ color: 'var(--danger, #ef4444)', fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.error || ''}
-                      </td>
-                    </tr>
+                    <React.Fragment key={c.id}>
+                      <tr
+                        onClick={() => setExpandedCallId(expandedCallId === c.id ? null : c.id)}
+                        style={{ cursor: c.requestBody ? 'pointer' : undefined }}
+                      >
+                        <td style={{ color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap' }}>{new Date(c.timestamp).toLocaleTimeString()}</td>
+                        <td style={{ color: 'var(--text-muted)' }}>{c.mcpSlug}</td>
+                        <td><strong>{c.toolName}</strong></td>
+                        <td>
+                          {c.success
+                            ? <span className="badge badge-success">ok</span>
+                            : <span className="badge badge-error">fail</span>
+                          }
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{formatMs(c.durationMs)}</td>
+                        <td style={{ textAlign: 'right' }}>{formatBytes(c.requestSize)}</td>
+                        <td style={{ textAlign: 'right' }}>{formatBytes(c.responseSize)}</td>
+                        <td style={{ color: 'var(--danger, #ef4444)', fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.error || ''}
+                        </td>
+                      </tr>
+                      {expandedCallId === c.id && c.requestBody && (
+                        <tr>
+                          <td colSpan={8} style={{ padding: '4px 12px 8px', borderTop: 'none', background: 'var(--bg-secondary, #1e1e2e)' }}>
+                            <div style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 4 }}>Request Body</div>
+                            <pre style={{ fontSize: 11, marginTop: 0, whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}><JsonHighlight raw={c.requestBody} /></pre>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -379,11 +442,11 @@ export function StatsPage() {
                       )}
                       <details style={{ marginBottom: 4 }}>
                         <summary style={{ color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Request Body</summary>
-                        <pre style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}>{formatJson(c.request_body || c.requestBody)}</pre>
+                        <pre style={{ fontSize: 11, marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}><JsonHighlight raw={c.request_body || c.requestBody} /></pre>
                       </details>
                       <details>
                         <summary style={{ color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12 }}>Response Body</summary>
-                        <pre style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}>{formatJson(c.response_body || c.responseBody)}</pre>
+                        <pre style={{ fontSize: 11, marginTop: 4, whiteSpace: 'pre-wrap', maxHeight: 300, overflow: 'auto' }}><JsonHighlight raw={c.response_body || c.responseBody} /></pre>
                       </details>
                     </div>
                   ))}

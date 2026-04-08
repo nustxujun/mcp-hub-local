@@ -38,7 +38,7 @@ export class HealthCheckService {
             method: 'initialize',
             id: 1,
             params: {
-              protocolVersion: '2024-11-05',
+              protocolVersion: '2025-03-26',
               capabilities: {},
               clientInfo: { name: 'mcp-hub-local-health', version: '0.1.0' },
             },

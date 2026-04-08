@@ -65,7 +65,42 @@ export function runMigrations(sqlite: Database.Database) {
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      session_id TEXT,
+      workspace_id INTEGER,
+      mcp_id INTEGER,
+      mcp_slug TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      success INTEGER NOT NULL DEFAULT 1,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      request_size INTEGER NOT NULL DEFAULT 0,
+      response_size INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      request_body TEXT,
+      response_body TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_mcp ON tool_calls(mcp_slug, tool_name);
+
+    CREATE TABLE IF NOT EXISTS exposed_tools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mcp_id INTEGER NOT NULL REFERENCES mcp_definitions(id) ON DELETE CASCADE,
+      tool_name TEXT NOT NULL,
+      UNIQUE(mcp_id, tool_name)
+    );
   `);
+
+  // Migration: add pinned and exposed columns to exposed_tools
+  try {
+    sqlite.exec(`ALTER TABLE exposed_tools ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* column already exists */ }
+  try {
+    sqlite.exec(`ALTER TABLE exposed_tools ADD COLUMN exposed INTEGER NOT NULL DEFAULT 0`);
+  } catch { /* column already exists */ }
 
   // Migration: add session_id column to logs
   try {
@@ -86,7 +121,7 @@ export function runMigrations(sqlite: Database.Database) {
   if (!existing) {
     sqlite.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?)').run(
       'syncClients',
-      JSON.stringify({ clients: [] })
+      JSON.stringify({ clients: ['cursor', 'claude'] })
     );
     sqlite.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?)').run(
       'logOptions',

@@ -43,6 +43,7 @@ A single hub that takes **full control** of all MCP configurations across every 
 - **Workspace-based Management** - Each workspace has its own set of MCPs, accessible at `/w/<slug>`; add, remove, or override MCPs per workspace from the dashboard
 - **Auto-Sync Client Configs** - The hub automatically writes MCP configurations to Cursor, Claude Desktop, Codex, and Gemini — you never touch those config files again
 - **Flexible Instance Modes** - Local MCPs support multiple instantiation strategies: `singleton`, `per-workspace`, `per-session`
+- **PTC (Programmatic Tool Calling)** - AI clients see only `search_tools` and `execute_code` instead of dozens of individual tools, dramatically reducing tool count and context consumption
 - **Session Monitoring** - Monitor MCP usage per client session in real time
 - **Web Dashboard** - Manage everything from `http://localhost:3000/app`
 
@@ -169,6 +170,54 @@ local-mcp-hub/
 
 Shared instances use **reference counting** - they stay alive while any session references them and are stopped when the last reference is released.
 
+## PTC (Programmatic Tool Calling)
+
+PTC consolidates all downstream MCP tools into two Hub-level tools:
+
+| Tool | Description |
+|------|-------------|
+| `search_tools` | Search available tools by keyword, returns Python function signatures |
+| `execute_code` | Execute a Python script that can directly call the discovered tool functions |
+
+### Workflow
+
+```
+AI Client                         Hub                          MCP Servers
+   │                               │                               │
+   │── search_tools(filter) ─────>│                               │
+   │<── Python function sigs ───── │                               │
+   │                               │                               │
+   │── execute_code(code) ───────>│── bridge call ───────────────>│
+   │                               │<── return result ────────────│
+   │<── result + logs ──────────── │                               │
+```
+
+### Expose & Pinned
+
+In PTC mode, you can set **Expose** and **Pinned** options for each tool on the MCP management page:
+
+| Option | Effect |
+|--------|--------|
+| **Expose** | Tool bypasses `search_tools` and is directly available to the AI client as a standalone tool. Ideal for frequently used or critical tools that AI should always be aware of |
+| **Pinned** | Tool always appears in `search_tools` results regardless of keyword match. Ideal for important tools that AI should always discover, but don't need to be exposed individually |
+
+> **Mutual exclusivity**: Expose and Pinned cannot be enabled simultaneously — once a tool is Exposed it is already directly visible, making Pinned unnecessary. Enabling Expose automatically clears Pinned.
+
+Tools not marked as Expose or Pinned will only appear when AI searches with matching keywords via `search_tools`.
+
+### Benefits
+
+- **Fewer tools** — Clients only declare 2 tools + a handful of Exposed tools instead of dozens, saving tokens and context window
+- **Batch execution** — A single `execute_code` call can chain multiple tool calls, reducing round trips
+- **Flexible orchestration** — AI can use conditionals, loops, error handling, and other logic in Python scripts to freely compose tools
+- **Fine-grained control** — Use Expose / Pinned to precisely control each tool's visibility strategy
+
+### Configuration
+
+Toggle **PTC (Programmatic Tool Calling)** in the Settings page. Enabled by default.
+
+> **Note**: Existing sessions need to reconnect after toggling. Requires Python 3 installed on the system.
+
 ## API Reference
 
 **MCPs**
@@ -285,6 +334,7 @@ Access the dashboard at **[http://localhost:3000/app](http://localhost:3000/app)
 | Key                        | Default | Description                                                  |
 | -------------------------- | ------- | ------------------------------------------------------------ |
 | `port`                     | `3000`  | Server port (requires restart)                               |
+| `enablePTC`                | `true`  | Enable PTC mode (Programmatic Tool Calling)                  |
 | `syncClients`              | `[]`    | Clients to auto-sync (`cursor`, `claude`, `codex`, `gemini`) |
 | `logOptions.pageSize`      | `50`    | Log entries per page                                         |
 | `logOptions.retentionDays` | `30`    | Log retention period                                         |
@@ -340,10 +390,9 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 - **按 Workspace 管理** - 每个 Workspace 拥有独立的 MCP 组合和端点 `/w/<slug>`，可在控制面板中随时增删或覆盖
 - **自动配置客户端** - Hub 自动将 MCP 配置写入 Cursor、Claude Desktop、Codex 和 Gemini，你再也不需要手动编辑这些配置文件
 - **灵活的实例模式** - 本地 MCP 支持多种实例化模式：`singleton`（全局单例）、`per-workspace`（按工作区）、`per-session`（按会话）
+- **PTC (Programmatic Tool Calling)** - AI 客户端不再直接看到数十个独立工具，而是通过 `search_tools` 搜索可用工具、再通过 `execute_code` 编写 Python 脚本批量调用，大幅减少工具数量和上下文消耗
 - **会话监控** - 实时监控每个客户端会话的 MCP 使用情况
 - **Web 控制面板** - 通过 `http://localhost:3000/app` 统一管理
-
-## 快速开始
 
 ### 前置要求
 
@@ -466,6 +515,54 @@ local-mcp-hub/
 
 共享实例使用**引用计数**——只要有会话引用就保持存活，最后一个引用释放时自动停止。
 
+## PTC (Programmatic Tool Calling)
+
+PTC 将 Hub 下游所有 MCP 工具收敛为两个 Hub 级别工具：
+
+| 工具 | 说明 |
+|------|------|
+| `search_tools` | 按关键字搜索可用工具，返回 Python 函数签名 |
+| `execute_code` | 执行 Python 脚本，脚本中可直接调用搜索到的工具函数 |
+
+### 工作流程
+
+```
+AI 客户端                        Hub                         MCP 服务器
+   │                              │                              │
+   │── search_tools(filter) ────>│                              │
+   │<── Python 函数签名列表 ────── │                              │
+   │                              │                              │
+   │── execute_code(code) ──────>│── 桥接调用 ──────────────────>│
+   │                              │<── 返回结果 ─────────────────│
+   │<── 执行结果 + 日志 ────────── │                              │
+```
+
+### Expose 与 Pinned
+
+在 PTC 模式下，可以在 MCP 管理页面中为每个工具设置 **Expose** 和 **Pinned** 两个选项：
+
+| 选项 | 作用 |
+|------|------|
+| **Expose** | 工具绕过 `search_tools`，作为独立工具直接暴露给 AI 客户端。适用于高频使用或需要 AI 始终感知的关键工具 |
+| **Pinned** | 工具始终出现在 `search_tools` 的搜索结果中，无论关键字是否匹配。适用于希望 AI 总能发现、但不需要单独暴露的重要工具 |
+
+> **互斥关系**：Expose 和 Pinned 不能同时勾选——工具被 Expose 后已经直接可见，不再需要 Pinned。勾选 Expose 时 Pinned 会自动取消。
+
+未标记 Expose 也未标记 Pinned 的工具，仅在 AI 通过 `search_tools` 搜索到匹配关键字时才会出现。
+
+### 优势
+
+- **减少工具数量**：客户端只需声明 2 个工具 + 少量 Exposed 工具，而非数十个，节省 token 和上下文窗口
+- **批量执行**：一次 `execute_code` 调用中可串联多个工具调用，减少往返轮次
+- **灵活编排**：AI 可在 Python 脚本中使用条件、循环、异常处理等逻辑自由组合工具
+- **精细控制**：通过 Expose / Pinned 精确控制每个工具的可见性策略
+
+### 配置
+
+在 Settings 页面中切换 **PTC (Programmatic Tool Calling)** 开关即可，默认开启。
+
+> **注意**：切换后已有会话需要重新连接才能生效。需要系统安装 Python 3。
+
 ## API 参考
 
 **MCP 管理**
@@ -580,6 +677,7 @@ local-mcp-hub/
 | 配置键                        | 默认值    | 说明                                           |
 | -------------------------- | ------ | -------------------------------------------- |
 | `port`                     | `3000` | 服务端口（需重启）                                    |
+| `enablePTC`                | `true` | 启用 PTC 模式（Programmatic Tool Calling）         |
 | `syncClients`              | `[]`   | 自动同步的客户端（`cursor`、`claude`、`codex`、`gemini`） |
 | `logOptions.pageSize`      | `50`   | 每页日志条数                                       |
 | `logOptions.retentionDays` | `30`   | 日志保留天数                                       |

@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
+import { eq } from 'drizzle-orm';
+import { schema, type HubDatabase } from '../db/index.js';
 import type { McpRegistryService } from '../services/mcp-registry.js';
 import type { HealthCheckService } from '../services/health-check.js';
 import type { RuntimePoolService } from '../services/runtime-pool.js';
 import type { McpAggregator } from '../services/aggregator/index.js';
 
-export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistryService, healthCheck: HealthCheckService, runtimePool: RuntimePoolService, aggregator: McpAggregator) {
+export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistryService, healthCheck: HealthCheckService, runtimePool: RuntimePoolService, aggregator: McpAggregator, db: HubDatabase) {
   app.get('/api/mcps', async () => {
     return registry.list();
   });
@@ -33,7 +35,7 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
             'Accept': 'application/json, text/event-stream',
             ...(config.headers || {}),
           },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'mcp-hub-local-test', version: '0.1.0' } } }),
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'mcp-hub-local-test', version: '0.1.0' } } }),
           signal: controller.signal,
         });
         clearTimeout(timeout);
@@ -112,7 +114,7 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
             'Accept': 'application/json, text/event-stream',
             ...(config.headers || {}),
           },
-          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'mcp-hub-local-test', version: '0.1.0' } } }),
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'mcp-hub-local-test', version: '0.1.0' } } }),
         });
         const body = await response.text();
         let parsed;
@@ -154,6 +156,109 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
     }
     await aggregator.restartMcpInstances(mcp.id);
     return { ok: true };
+  });
+
+  // ── Tool Exposure ──
+
+  // Get tools list from a running MCP instance (local or remote)
+  app.get('/api/mcps/:id/tools', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcp = await registry.getById(parseInt(id));
+    if (!mcp) {
+      return reply.status(404).send({ error: 'MCP not found' });
+    }
+
+    if (mcp.transportKind === 'streamable-http') {
+      // Remote MCP: initialize a temporary session, then send tools/list
+      const config = mcp.configJson as { url: string; headers?: Record<string, string> };
+      const commonHeaders = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        ...(config.headers || {}),
+      };
+      try {
+        // Step 1: initialize to get session id
+        const initRes = await fetch(config.url, {
+          method: 'POST',
+          headers: commonHeaders,
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'initialize', id: 1, params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'mcp-hub-local-tools', version: '0.1.0' } } }),
+        });
+        if (!initRes.ok) {
+          return { tools: [], message: `Remote MCP returned ${initRes.status}` };
+        }
+        const sessionId = initRes.headers.get('mcp-session-id');
+
+        // Step 2: send initialized notification
+        await fetch(config.url, {
+          method: 'POST',
+          headers: { ...commonHeaders, ...(sessionId ? { 'mcp-session-id': sessionId } : {}) },
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+        });
+
+        // Step 3: tools/list
+        const toolsRes = await fetch(config.url, {
+          method: 'POST',
+          headers: { ...commonHeaders, ...(sessionId ? { 'mcp-session-id': sessionId } : {}) },
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'tools/list', id: 2, params: {} }),
+        });
+        const toolsBody = await toolsRes.json() as any;
+        return { tools: toolsBody?.result?.tools || [] };
+      } catch (err: any) {
+        return { tools: [], message: `Failed to connect: ${err.message}` };
+      }
+    }
+
+    // Local (stdio) MCP: use running handle
+    const handles = runtimePool.listHandles();
+    const handle = handles.find(h => h.mcpId === mcp.id);
+    if (!handle) {
+      return { tools: [], message: 'MCP is not running. Start it first to discover tools.' };
+    }
+
+    try {
+      const reqId = Date.now() + Math.floor(Math.random() * 100000);
+      const response = await runtimePool.sendJsonRpc(handle, {
+        jsonrpc: '2.0',
+        method: 'tools/list',
+        id: reqId,
+        params: {},
+      }, 10000) as any;
+
+      return { tools: response?.result?.tools || [] };
+    } catch (err: any) {
+      return reply.status(500).send({ error: `Failed to list tools: ${err.message}` });
+    }
+  });
+
+  // Get tool settings for an MCP (exposed + pinned)
+  app.get('/api/mcps/:id/exposed-tools', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcpId = parseInt(id);
+    const rows = await db.select().from(schema.exposedTools).where(eq(schema.exposedTools.mcpId, mcpId));
+    return rows.map(r => ({ toolName: r.toolName, exposed: r.exposed, pinned: r.pinned }));
+  });
+
+  // Set tool settings for an MCP (full replace)
+  app.put('/api/mcps/:id/exposed-tools', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcpId = parseInt(id);
+    const { tools } = request.body as { tools: Array<{ toolName: string; exposed?: boolean; pinned?: boolean }> };
+
+    if (!Array.isArray(tools)) {
+      return reply.status(400).send({ error: 'tools must be an array of { toolName, exposed?, pinned? }' });
+    }
+
+    // Delete existing and insert new
+    db.delete(schema.exposedTools).where(eq(schema.exposedTools.mcpId, mcpId)).run();
+    for (const t of tools) {
+      if (!t.exposed && !t.pinned) continue; // skip tools with no settings
+      db.insert(schema.exposedTools).values({ mcpId, toolName: t.toolName, exposed: t.exposed ?? false, pinned: t.pinned ?? false }).run();
+    }
+
+    // Invalidate cached tools in all active sessions so changes take effect
+    aggregator.invalidateAllToolCaches();
+
+    return { ok: true, tools };
   });
 
   // ── Runtime Instances ──

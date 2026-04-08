@@ -31,6 +31,11 @@ export const getHealthStatus = () => request<Record<number, { ok: boolean; statu
 export const listRuntimeInstances = () => request<any[]>('/api/runtime-instances');
 export const deleteRuntimeInstance = (id: number) => request<void>(`/api/runtime-instances/${id}`, { method: 'DELETE' });
 
+// ── Tool Exposure ──
+export const getMcpTools = (mcpId: number) => request<{ tools: any[]; message?: string }>(`/api/mcps/${mcpId}/tools`);
+export const getExposedTools = (mcpId: number) => request<Array<{ toolName: string; exposed: boolean; pinned: boolean }>>(`/api/mcps/${mcpId}/exposed-tools`);
+export const setExposedTools = (mcpId: number, tools: Array<{ toolName: string; exposed?: boolean; pinned?: boolean }>) => request<any>(`/api/mcps/${mcpId}/exposed-tools`, { method: 'PUT', body: JSON.stringify({ tools }) });
+
 // ── Workspaces ──
 export const listWorkspaces = () => request<any[]>('/api/workspaces');
 export const getWorkspace = (id: number) => request<any>(`/api/workspaces/${id}`);

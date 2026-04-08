@@ -76,3 +76,11 @@ export const toolCalls = sqliteTable('tool_calls', {
   requestBody: text('request_body'),
   responseBody: text('response_body'),
 });
+
+export const exposedTools = sqliteTable('exposed_tools', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  mcpId: integer('mcp_id').notNull().references(() => mcpDefinitions.id, { onDelete: 'cascade' }),
+  toolName: text('tool_name').notNull(),
+  exposed: integer('exposed', { mode: 'boolean' }).notNull().default(false),
+  pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
+});

@@ -23,7 +23,7 @@ const emptyForm = {
 export function McpsPage() {
   const msgbox = useMessageBox();
   const [mcps, setMcps] = useState<McpDef[]>([]);
-  const [tab, setTab] = useState<'remote' | 'local'>('remote');
+  const [tab, setTab] = useState<'remote' | 'local' | 'tools'>('remote');
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingMcp, setEditingMcp] = useState<McpDef | null>(null);
@@ -35,6 +35,19 @@ export function McpsPage() {
   const [instances, setInstances] = useState<any[]>([]);
   const [allInstances, setAllInstances] = useState<any[]>([]);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Unified Tools Modal state
+  const [toolsMcp, setToolsMcp] = useState<McpDef | null>(null);
+  const [toolsList, setToolsList] = useState<any[]>([]);
+  const [toolsExposed, setToolsExposed] = useState<Set<string>>(new Set());
+  const [toolsPinned, setToolsPinned] = useState<Set<string>>(new Set());
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsMessage, setToolsMessage] = useState<string | null>(null);
+
+  // Tools Tab state: per-MCP data
+  const [allToolsData, setAllToolsData] = useState<Record<number, { tools: any[]; exposed: Set<string>; pinned: Set<string>; message?: string; loading: boolean }>>({});
+  const [allToolsLoading, setAllToolsLoading] = useState(false);
+  const [expandedMcps, setExpandedMcps] = useState<Set<number>>(new Set());
 
   const load = async () => {
     const data = await api.listMcps();
@@ -48,8 +61,6 @@ export function McpsPage() {
         api.getHealthStatus(),
         api.listSessions(),
       ]);
-
-      // Build mcpId → best status from all session backends
       const mcpSessionStatus = new Map<number, string>();
       for (const s of sessions) {
         for (const b of (s as any).backends || []) {
@@ -59,7 +70,6 @@ export function McpsPage() {
           else if (b.status === 'error' && !prev) mcpSessionStatus.set(b.mcpId, 'error');
         }
       }
-
       const updated: Record<number, ConnStatus> = {};
       for (const m of mcpList) {
         const ss = mcpSessionStatus.get(m.id);
@@ -84,18 +94,14 @@ export function McpsPage() {
 
   const scanConnectivity = async (mcpList: McpDef[]) => {
     const initial: Record<number, ConnStatus> = {};
-    for (const m of mcpList) {
-      initial[m.id] = 'checking';
-    }
+    for (const m of mcpList) initial[m.id] = 'checking';
     setConnStatus(initial);
-
     try {
       const results = await api.batchTestMcps();
       const updated: Record<number, ConnStatus> = {};
       for (const m of mcpList) {
-        if (m.transportKind === 'stdio') {
-          updated[m.id] = 'checking';
-        } else {
+        if (m.transportKind === 'stdio') updated[m.id] = 'checking';
+        else {
           const r = results[m.id];
           updated[m.id] = r?.ok ? 'ok' : 'fail';
         }
@@ -103,15 +109,11 @@ export function McpsPage() {
       setConnStatus(updated);
     } catch {
       const fallback: Record<number, ConnStatus> = {};
-      for (const m of mcpList) {
-        fallback[m.id] = 'fail';
-      }
+      for (const m of mcpList) fallback[m.id] = 'fail';
       setConnStatus(fallback);
     }
   };
 
-  /** Load all runtime instances (only active: starting/running) and derive local MCP status.
-   *  For local MCPs, status is determined by singleton instances only. */
   const loadAllInstances = useCallback(async (mcpList?: McpDef[]) => {
     try {
       const all = await api.listRuntimeInstances();
@@ -121,22 +123,15 @@ export function McpsPage() {
         const updated = { ...prev };
         for (const m of list) {
           if (m.transportKind === 'stdio') {
-            // Only use singleton instances for local MCP status
             const singletonInst = all.find((i: any) =>
               (i.mcp_id || i.mcpId) === m.id &&
               (i.instance_mode || i.instanceMode) === 'singleton'
             );
-            if (!singletonInst) {
-              updated[m.id] = 'fail'; // no singleton instance → offline
-            } else if (singletonInst.status === 'running') {
-              updated[m.id] = 'ok';
-            } else if (singletonInst.status === 'starting') {
-              updated[m.id] = 'starting';
-            } else if (singletonInst.status === 'error') {
-              updated[m.id] = 'error';
-            } else {
-              updated[m.id] = 'fail';
-            }
+            if (!singletonInst) updated[m.id] = 'fail';
+            else if (singletonInst.status === 'running') updated[m.id] = 'ok';
+            else if (singletonInst.status === 'starting') updated[m.id] = 'starting';
+            else if (singletonInst.status === 'error') updated[m.id] = 'error';
+            else updated[m.id] = 'fail';
           }
         }
         return updated;
@@ -155,28 +150,19 @@ export function McpsPage() {
     });
   }, []);
 
-  // When a local MCP is selected, filter instances for it
   useEffect(() => {
     if (selectedLocalMcp) {
       setInstances(allInstances.filter((i: any) => (i.mcp_id || i.mcpId) === selectedLocalMcp.id));
     }
   }, [selectedLocalMcp, allInstances]);
 
-  // 1-second polling when local MCP instance panel is open
   useEffect(() => {
     if (selectedLocalMcp) {
-      // Immediate fetch
       loadAllInstances();
-      pollTimerRef.current = setInterval(() => {
-        loadAllInstances();
-      }, 1000);
+      pollTimerRef.current = setInterval(() => loadAllInstances(), 1000);
     }
-
     return () => {
-      if (pollTimerRef.current) {
-        clearInterval(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
+      if (pollTimerRef.current) { clearInterval(pollTimerRef.current); pollTimerRef.current = null; }
     };
   }, [selectedLocalMcp?.id]);
 
@@ -195,12 +181,11 @@ export function McpsPage() {
     return localMcps.filter(m => m.name.toLowerCase().includes(q) || m.slug.toLowerCase().includes(q));
   }, [localMcps, search]);
 
+  // ── Actions ──
+
   const openAddModal = () => {
     setEditingMcp(null);
-    setForm({
-      ...emptyForm,
-      transportKind: tab === 'remote' ? 'streamable-http' : 'stdio',
-    });
+    setForm({ ...emptyForm, transportKind: tab === 'remote' ? 'streamable-http' : 'stdio' });
     setShowModal(true);
   };
 
@@ -208,15 +193,12 @@ export function McpsPage() {
     setEditingMcp(mcp);
     const cfg = mcp.configJson || {};
     setForm({
-      name: mcp.name,
-      slug: mcp.slug,
-      transportKind: mcp.transportKind,
+      name: mcp.name, slug: mcp.slug, transportKind: mcp.transportKind,
       instanceMode: mcp.instanceMode || 'per-workspace',
       command: cfg.command || '',
       args: Array.isArray(cfg.args) ? cfg.args.join(' ') : (cfg.args || ''),
       env: cfg.env && Object.keys(cfg.env).length > 0 ? JSON.stringify(cfg.env) : '',
-      url: cfg.url || '',
-      headers: cfg.headers && Object.keys(cfg.headers).length > 0 ? JSON.stringify(cfg.headers) : '',
+      url: cfg.url || '', headers: cfg.headers && Object.keys(cfg.headers).length > 0 ? JSON.stringify(cfg.headers) : '',
     });
     setShowModal(true);
   };
@@ -226,37 +208,19 @@ export function McpsPage() {
     const configJson = isRemote
       ? { kind: 'streamable-http', url: form.url, headers: form.headers ? JSON.parse(form.headers) : {} }
       : { kind: 'stdio', command: form.command, args: form.args.split(' ').filter(Boolean), env: form.env ? JSON.parse(form.env) : {}, instanceMode: form.instanceMode };
-
     if (editingMcp) {
-      await api.updateMcp(editingMcp.id, {
-        name: form.name,
-        slug: form.slug || undefined,
-        instanceMode: isRemote ? 'singleton' : form.instanceMode,
-        configJson,
-      });
+      await api.updateMcp(editingMcp.id, { name: form.name, slug: form.slug || undefined, instanceMode: isRemote ? 'singleton' : form.instanceMode, configJson });
     } else {
-      await api.createMcp({
-        name: form.name,
-        slug: form.slug || undefined,
-        transportKind: form.transportKind,
-        instanceMode: isRemote ? 'singleton' : form.instanceMode,
-        configJson,
-      });
+      await api.createMcp({ name: form.name, slug: form.slug || undefined, transportKind: form.transportKind, instanceMode: isRemote ? 'singleton' : form.instanceMode, configJson });
     }
-    setShowModal(false);
-    setEditingMcp(null);
-    setForm({ ...emptyForm });
-    const data = await load();
-    await scanConnectivity(data);
-    await loadAllInstances(data);
+    setShowModal(false); setEditingMcp(null); setForm({ ...emptyForm });
+    const data = await load(); await scanConnectivity(data); await loadAllInstances(data);
   };
 
   const handleDelete = async (id: number) => {
     await api.deleteMcp(id);
     if (selectedLocalMcp?.id === id) setSelectedLocalMcp(null);
-    const data = await load();
-    await scanConnectivity(data);
-    await loadAllInstances(data);
+    const data = await load(); await scanConnectivity(data); await loadAllInstances(data);
   };
 
   const handleTest = async (id: number) => {
@@ -277,20 +241,171 @@ export function McpsPage() {
 
   const handleSelectLocalMcp = async (m: McpDef) => {
     setSelectedLocalMcp(m);
-    // Check if a singleton instance exists; if not, try to start one
     const hasSingleton = allInstances.some((i: any) =>
-      (i.mcp_id || i.mcpId) === m.id &&
-      (i.instance_mode || i.instanceMode) === 'singleton'
+      (i.mcp_id || i.mcpId) === m.id && (i.instance_mode || i.instanceMode) === 'singleton'
     );
     if (!hasSingleton) {
-      try {
-        await api.startMcp(m.id);
-        await loadAllInstances();
-      } catch {
-        // start failed — loadAllInstances will pick up the error state
-        await loadAllInstances();
-      }
+      try { await api.startMcp(m.id); } catch { /* ignore */ }
+      await loadAllInstances();
     }
+  };
+
+  // ── Unified Tools Modal ──
+
+  const openToolsModal = async (mcp: McpDef) => {
+    setToolsMcp(mcp);
+    setToolsList([]);
+    setToolsExposed(new Set());
+    setToolsPinned(new Set());
+    setToolsLoading(true);
+    setToolsMessage(null);
+    try {
+      const [toolsResult, settings] = await Promise.all([
+        api.getMcpTools(mcp.id),
+        api.getExposedTools(mcp.id),
+      ]);
+      setToolsList(toolsResult.tools || []);
+      setToolsExposed(new Set(settings.filter(s => s.exposed).map(s => s.toolName)));
+      setToolsPinned(new Set(settings.filter(s => s.pinned).map(s => s.toolName)));
+      if (toolsResult.message) setToolsMessage(toolsResult.message);
+    } catch (err: any) {
+      setToolsMessage(err.message || 'Failed to load tools');
+    } finally {
+      setToolsLoading(false);
+    }
+  };
+
+  const saveToolSettings = async (exposed: Set<string>, pinned: Set<string>) => {
+    if (!toolsMcp) return;
+    const allNames = new Set([...exposed, ...pinned]);
+    const tools = [...allNames].map(toolName => ({
+      toolName,
+      exposed: exposed.has(toolName),
+      pinned: pinned.has(toolName),
+    }));
+    await api.setExposedTools(toolsMcp.id, tools);
+  };
+
+  const handleToggleTool = async (toolName: string) => {
+    const nextExposed = new Set(toolsExposed);
+    const nextPinned = new Set(toolsPinned);
+    if (nextExposed.has(toolName)) {
+      nextExposed.delete(toolName);
+    } else {
+      nextExposed.add(toolName);
+      nextPinned.delete(toolName); // expose implies no need for pin
+    }
+    setToolsExposed(nextExposed);
+    setToolsPinned(nextPinned);
+    await saveToolSettings(nextExposed, nextPinned);
+  };
+
+  const handleTogglePinned = async (toolName: string) => {
+    const nextPinned = new Set(toolsPinned);
+    if (nextPinned.has(toolName)) nextPinned.delete(toolName); else nextPinned.add(toolName);
+    setToolsPinned(nextPinned);
+    await saveToolSettings(toolsExposed, nextPinned);
+  };
+
+  // ── Tools Tab ──
+
+  const loadAllTools = async () => {
+    // Only loads settings counts (exposed/pinned) for summary display, not full tools
+    setAllToolsLoading(true);
+    const data: typeof allToolsData = {};
+    await Promise.all(mcps.map(async (m) => {
+      try {
+        const settings = await api.getExposedTools(m.id);
+        data[m.id] = {
+          tools: [],
+          exposed: new Set(settings.filter(s => s.exposed).map(s => s.toolName)),
+          pinned: new Set(settings.filter(s => s.pinned).map(s => s.toolName)),
+          loading: false,
+        };
+      } catch {
+        data[m.id] = { tools: [], exposed: new Set(), pinned: new Set(), loading: false };
+      }
+    }));
+    setAllToolsData({ ...data });
+    setAllToolsLoading(false);
+  };
+
+  const loadMcpTools = async (mcpId: number) => {
+    setAllToolsData(prev => ({ ...prev, [mcpId]: { ...prev[mcpId], loading: true } }));
+    try {
+      const [toolsResult, settings] = await Promise.all([
+        api.getMcpTools(mcpId),
+        api.getExposedTools(mcpId),
+      ]);
+      setAllToolsData(prev => ({
+        ...prev,
+        [mcpId]: {
+          tools: toolsResult.tools || [],
+          exposed: new Set(settings.filter(s => s.exposed).map(s => s.toolName)),
+          pinned: new Set(settings.filter(s => s.pinned).map(s => s.toolName)),
+          message: toolsResult.message,
+          loading: false,
+        },
+      }));
+    } catch (err: any) {
+      setAllToolsData(prev => ({
+        ...prev,
+        [mcpId]: { ...prev[mcpId], tools: [], message: err.message, loading: false },
+      }));
+    }
+  };
+
+  const toggleMcpExpand = (mcpId: number) => {
+    setExpandedMcps(prev => {
+      const next = new Set(prev);
+      if (next.has(mcpId)) {
+        next.delete(mcpId);
+      } else {
+        next.add(mcpId);
+        // Lazy load tools on first expand
+        const d = allToolsData[mcpId];
+        if (!d || d.tools.length === 0) loadMcpTools(mcpId);
+      }
+      return next;
+    });
+  };
+
+  const handleTabToggleExpose = async (mcpId: number, toolName: string) => {
+    const d = allToolsData[mcpId];
+    if (!d) return;
+    const nextExposed = new Set(d.exposed);
+    const nextPinned = new Set(d.pinned);
+    if (nextExposed.has(toolName)) {
+      nextExposed.delete(toolName);
+    } else {
+      nextExposed.add(toolName);
+      nextPinned.delete(toolName);
+    }
+    setAllToolsData(prev => ({ ...prev, [mcpId]: { ...prev[mcpId], exposed: nextExposed, pinned: nextPinned } }));
+    const allNames = new Set([...nextExposed, ...nextPinned]);
+    await api.setExposedTools(mcpId, [...allNames].map(tn => ({ toolName: tn, exposed: nextExposed.has(tn), pinned: nextPinned.has(tn) })));
+  };
+
+  const handleTabTogglePinned = async (mcpId: number, toolName: string) => {
+    const d = allToolsData[mcpId];
+    if (!d) return;
+    const nextPinned = new Set(d.pinned);
+    if (nextPinned.has(toolName)) nextPinned.delete(toolName); else nextPinned.add(toolName);
+    setAllToolsData(prev => ({ ...prev, [mcpId]: { ...prev[mcpId], pinned: nextPinned } }));
+    const allNames = new Set([...d.exposed, ...nextPinned]);
+    await api.setExposedTools(mcpId, [...allNames].map(tn => ({ toolName: tn, exposed: d.exposed.has(tn), pinned: nextPinned.has(tn) })));
+  };
+
+  // Load tools when switching to Tools tab
+  useEffect(() => {
+    if (tab === 'tools' && mcps.length > 0) loadAllTools();
+  }, [tab, mcps.length]);
+
+  // ── Helpers ──
+
+  const isOnline = (id: number) => {
+    const s = connStatus[id];
+    return s === 'ok';
   };
 
   const statusDot = (id: number) => {
@@ -304,18 +419,60 @@ export function McpsPage() {
 
   const instanceStatusBadge = (status: string) => {
     switch (status) {
-      case 'running':
-        return <span className="badge badge-success" style={{ minWidth: 52, justifyContent: 'center' }}>running</span>;
-      case 'starting':
-        return <span className="badge badge-warning" style={{ minWidth: 52, justifyContent: 'center' }}>loading</span>;
-      case 'error':
-        return <span className="badge badge-error" style={{ minWidth: 52, justifyContent: 'center' }}>error</span>;
-      default:
-        return <span className="badge badge-info" style={{ minWidth: 52, justifyContent: 'center' }}>{status}</span>;
+      case 'running': return <span className="badge badge-success" style={{ minWidth: 52, justifyContent: 'center' }}>running</span>;
+      case 'starting': return <span className="badge badge-warning" style={{ minWidth: 52, justifyContent: 'center' }}>loading</span>;
+      case 'error': return <span className="badge badge-error" style={{ minWidth: 52, justifyContent: 'center' }}>error</span>;
+      default: return <span className="badge badge-info" style={{ minWidth: 52, justifyContent: 'center' }}>{status}</span>;
     }
   };
 
   const isRemote = form.transportKind === 'streamable-http';
+
+  // ── Shared MCP Card ──
+  const McpCard = ({ mcp, isLocal }: { mcp: McpDef; isLocal: boolean }) => {
+    const online = isOnline(mcp.id);
+    const selected = isLocal && selectedLocalMcp?.id === mcp.id;
+    return (
+      <div
+        className="card"
+        style={{
+          padding: '12px 14px',
+          cursor: isLocal ? 'pointer' : undefined,
+          border: selected ? '1px solid var(--accent)' : undefined,
+          width: isLocal ? undefined : 260,
+        }}
+        onClick={isLocal ? () => handleSelectLocalMcp(mcp) : undefined}
+      >
+        {/* Row 1: Status + Name */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          {statusDot(mcp.id)}
+          <strong style={{ fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{mcp.name}</strong>
+          {isLocal && (
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-hover)', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>
+              {mcp.instanceMode}
+            </span>
+          )}
+        </div>
+
+        {/* Row 2: Actions (wrap allowed) */}
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-ghost btn-sm"
+            disabled={!online}
+            style={{ opacity: online ? 1 : 0.4 }}
+            onClick={(e) => { e.stopPropagation(); openToolsModal(mcp); }}
+          >
+            Tools
+          </button>
+          {!isLocal && (
+            <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); handleTest(mcp.id); }}>Test</button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); openEditModal(mcp); }}>Edit</button>
+          <ConfirmButton onConfirm={() => handleDelete(mcp.id)}>Delete</ConfirmButton>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -325,7 +482,7 @@ export function McpsPage() {
             <h2 className="page-title">MCP Registry</h2>
             <p className="page-subtitle">Manage registered MCP definitions</p>
           </div>
-          <button className="btn btn-primary" onClick={openAddModal}>
+          <button className="btn btn-primary" onClick={openAddModal} style={{ visibility: tab === 'tools' ? 'hidden' : undefined }}>
             + Add {tab === 'remote' ? 'Remote' : 'Local'} MCP
           </button>
         </div>
@@ -334,16 +491,14 @@ export function McpsPage() {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <button className={`btn ${tab === 'remote' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab('remote')}>Remote MCPs</button>
         <button className={`btn ${tab === 'local' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab('local')}>Local MCPs</button>
+        <button className={`btn ${tab === 'tools' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab('tools')}>Tools</button>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <input
-          placeholder="Search by name or slug..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ width: 320 }}
-        />
-      </div>
+      {tab !== 'tools' && (
+        <div style={{ marginBottom: 16 }}>
+          <input placeholder="Search by name or slug..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: 320 }} />
+        </div>
+      )}
 
       {/* Remote MCPs Tab */}
       {tab === 'remote' && (
@@ -353,24 +508,8 @@ export function McpsPage() {
             <p>{remoteMcps.length === 0 ? 'Add your first remote MCP to get started' : 'Try a different search term'}</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            {filteredRemote.map(m => (
-              <div key={m.id} className="card" style={{ padding: 14, width: 280 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {statusDot(m.id)}
-                      <strong style={{ fontSize: 14 }}>{m.name}</strong>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => openEditModal(m)}>Edit</button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => handleTest(m.id)}>Test</button>
-                    <ConfirmButton onConfirm={() => handleDelete(m.id)}>Delete</ConfirmButton>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {filteredRemote.map(m => <McpCard key={m.id} mcp={m} isLocal={false} />)}
           </div>
         )
       )}
@@ -378,40 +517,18 @@ export function McpsPage() {
       {/* Local MCPs Tab */}
       {tab === 'local' && (
         <div style={{ display: 'flex', gap: 20, minHeight: 'calc(100vh - 320px)' }}>
-          <div style={{ width: 280, flexShrink: 0 }}>
+          {/* Left: MCP list */}
+          <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
             {filteredLocal.length === 0 ? (
               <div className="empty-state">
                 <h3>{localMcps.length === 0 ? 'No local MCPs' : 'No matches'}</h3>
               </div>
             ) : (
-              filteredLocal.map(m => (
-                <div
-                  key={m.id}
-                  className="card"
-                  style={{
-                    cursor: 'pointer',
-                    border: selectedLocalMcp?.id === m.id ? '1px solid var(--accent)' : undefined,
-                    padding: 14,
-                  }}
-                  onClick={() => handleSelectLocalMcp(m)}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {statusDot(m.id)}
-                        <strong style={{ fontSize: 14 }}>{m.name}</strong>
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{m.instanceMode}</div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); openEditModal(m); }}>Edit</button>
-                      <ConfirmButton onConfirm={() => handleDelete(m.id)}>Delete</ConfirmButton>
-                    </div>
-                  </div>
-                </div>
-              ))
+              filteredLocal.map(m => <McpCard key={m.id} mcp={m} isLocal={true} />)
             )}
           </div>
+
+          {/* Right: Instance detail */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             {selectedLocalMcp ? (
               <div className="card" style={{ flex: 1 }}>
@@ -453,6 +570,109 @@ export function McpsPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Tools Tab */}
+      {tab === 'tools' && (
+        <div>
+          {allToolsLoading && mcps.length > 0 && (
+            <div style={{ color: 'var(--text-muted)', padding: 16 }}>Loading tools from all MCPs...</div>
+          )}
+          {mcps.length === 0 ? (
+            <div className="empty-state"><h3>No MCPs registered</h3><p>Add MCPs first to manage their tools</p></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {mcps.map(m => {
+                const d = allToolsData[m.id];
+                const online = isOnline(m.id);
+                const collapsed = !expandedMcps.has(m.id);
+                const toolCount = d?.tools?.length || 0;
+                const exposedCount = d?.exposed?.size || 0;
+                const pinnedCount = d?.pinned?.size || 0;
+
+                return (
+                  <div key={m.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    {/* Group header */}
+                    <div
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                        cursor: 'pointer', userSelect: 'none',
+                        borderBottom: collapsed ? 'none' : '1px solid var(--border)',
+                      }}
+                      onClick={() => toggleMcpExpand(m.id)}
+                    >
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)', width: 14, textAlign: 'center' }}>{collapsed ? '\u25b6' : '\u25bc'}</span>
+                      {statusDot(m.id)}
+                      <strong style={{ fontSize: 14 }}>{m.name}</strong>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-hover)', padding: '1px 6px', borderRadius: 4 }}>
+                        {m.transportKind === 'stdio' ? 'local' : 'remote'}
+                      </span>
+                      {toolCount > 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          {toolCount} tools{exposedCount > 0 ? `, ${exposedCount} exposed` : ''}{pinnedCount > 0 ? `, ${pinnedCount} pinned` : ''}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Tool list */}
+                    {!collapsed && (
+                      <div style={{ padding: '0 14px 10px' }}>
+                        {d?.loading ? (
+                          <div style={{ color: 'var(--text-muted)', padding: 12 }}>Loading...</div>
+                        ) : d?.message && toolCount === 0 ? (
+                          <div style={{ color: 'var(--text-muted)', padding: 12, fontSize: 13 }}>{d.message}</div>
+                        ) : toolCount === 0 ? (
+                          <div style={{ color: 'var(--text-muted)', padding: 12, fontSize: 13 }}>
+                            {online ? 'No tools available' : 'MCP is offline — start it to discover tools'}
+                          </div>
+                        ) : (
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                <th style={{ padding: '6px 8px', textAlign: 'left', fontSize: 12, fontWeight: 600 }}>Tool</th>
+                                <th style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 600, width: 70 }}>Expose</th>
+                                <th style={{ padding: '6px 8px', textAlign: 'center', fontSize: 12, fontWeight: 600, width: 70 }}>Pinned</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {d.tools.map((tool: any) => {
+                                const isExposed = d.exposed.has(tool.name);
+                                return (
+                                  <tr key={tool.name} style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <td style={{ padding: '6px 8px' }}>
+                                      <div style={{ fontSize: 13, fontWeight: 600 }}>{tool.name}</div>
+                                      {tool.description && (
+                                        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1, maxHeight: 36, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                          {tool.description}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                      <input type="checkbox" checked={isExposed} onChange={() => handleTabToggleExpose(m.id, tool.name)} />
+                                    </td>
+                                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={d.pinned.has(tool.name)}
+                                        disabled={isExposed}
+                                        style={{ opacity: isExposed ? 0.3 : 1 }}
+                                        onChange={() => handleTabTogglePinned(m.id, tool.name)}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -500,7 +720,6 @@ export function McpsPage() {
                 </div>
               )}
             </div>
-
             {!isRemote ? (
               <>
                 <div className="form-group">
@@ -528,7 +747,6 @@ export function McpsPage() {
                 </div>
               </>
             )}
-
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={() => { setShowModal(false); setEditingMcp(null); }}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSave} disabled={!form.name || (isRemote ? !form.url : !form.command)}>
@@ -538,6 +756,82 @@ export function McpsPage() {
           </div>
         </div>
       )}
+
+      {/* Unified Tools Modal */}
+      {toolsMcp && (
+        <div className="modal-overlay" onClick={() => setToolsMcp(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <h3 className="modal-title">Tools - {toolsMcp.name}</h3>
+
+            {toolsLoading ? (
+              <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>Loading tools...</div>
+            ) : toolsMessage && toolsList.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>{toolsMessage}</div>
+            ) : toolsList.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', padding: 24, textAlign: 'center' }}>No tools available</div>
+            ) : (
+              <>
+                {/* Options section header */}
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.8 }}>
+                  <div><b>Expose</b> — tool bypasses search_tools, directly available to AI</div>
+                  <div><b>Pinned</b> — tool always appears in search_tools results</div>
+                </div>
+
+                <div style={{ maxHeight: 450, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg-primary, #1a1a2e)' }}>
+                        <th style={{ padding: '8px 12px', textAlign: 'left', fontSize: 12, fontWeight: 600 }}>Tool</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12, fontWeight: 600, width: 70 }}>Expose</th>
+                        <th style={{ padding: '8px 12px', textAlign: 'center', fontSize: 12, fontWeight: 600, width: 70 }}>Pinned</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {toolsList.map((tool: any) => (
+                        <tr key={tool.name} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '8px 12px' }}>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{tool.name}</div>
+                            {tool.description && (
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, maxHeight: 40, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {tool.description}
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={toolsExposed.has(tool.name)}
+                              onChange={() => handleToggleTool(tool.name)}
+                            />
+                          </td>
+                          <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={toolsPinned.has(tool.name)}
+                              disabled={toolsExposed.has(tool.name)}
+                              style={{ opacity: toolsExposed.has(tool.name) ? 0.3 : 1 }}
+                              onChange={() => handleTogglePinned(tool.name)}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                  {toolsExposed.size} exposed, {toolsPinned.size} pinned of {toolsList.length} tools
+                </div>
+              </>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setToolsMcp(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

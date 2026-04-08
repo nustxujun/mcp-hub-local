@@ -2,6 +2,8 @@ import type { McpRegistryService } from './mcp-registry.js';
 import type { WorkspaceService } from './workspace.js';
 import type { RuntimePoolService } from './runtime-pool.js';
 import type { McpAggregator } from './aggregator/index.js';
+import { eq } from 'drizzle-orm';
+import { schema, type HubDatabase } from '../db/index.js';
 
 export interface HubConfigMcp {
   name: string;
@@ -26,11 +28,19 @@ export interface HubConfigBinding {
   instanceModeOverride: string | null;
 }
 
+export interface HubConfigToolSetting {
+  mcpSlug: string;
+  toolName: string;
+  exposed: boolean;
+  pinned: boolean;
+}
+
 export interface HubConfig {
   version: number;
   mcps: HubConfigMcp[];
   workspaces: HubConfigWorkspace[];
   bindings: HubConfigBinding[];
+  toolSettings?: HubConfigToolSetting[];
 }
 
 export class ConfigIOService {
@@ -39,6 +49,7 @@ export class ConfigIOService {
     private workspaceService: WorkspaceService,
     private runtimePool: RuntimePoolService,
     private aggregator: McpAggregator,
+    private db: HubDatabase,
   ) {}
 
   async exportConfig(): Promise<HubConfig> {
@@ -66,6 +77,22 @@ export class ConfigIOService {
       }
     }
 
+    // Collect tool settings (exposed/pinned)
+    const toolSettingsRows = await this.db.select().from(schema.exposedTools);
+    const mcpIdToSlugMap = new Map(mcps.map(m => [m.id, m.slug]));
+    const toolSettings: HubConfigToolSetting[] = [];
+    for (const row of toolSettingsRows) {
+      const mcpSlug = mcpIdToSlugMap.get(row.mcpId);
+      if (mcpSlug) {
+        toolSettings.push({
+          mcpSlug,
+          toolName: row.toolName,
+          exposed: row.exposed ?? false,
+          pinned: row.pinned ?? false,
+        });
+      }
+    }
+
     return {
       version: 1,
       mcps: mcps.map(m => ({
@@ -83,6 +110,7 @@ export class ConfigIOService {
         description: w.description,
       })),
       bindings,
+      toolSettings,
     };
   }
 
@@ -184,6 +212,28 @@ export class ConfigIOService {
         created++;
       } catch (e: any) {
         errors.push(`Failed to create binding ${bindingData.workspaceSlug}/${bindingData.mcpSlug}: ${e.message}`);
+      }
+    }
+
+    // 8. Restore tool settings (exposed/pinned)
+    if (config.toolSettings) {
+      for (const ts of config.toolSettings) {
+        const mcpId = mcpSlugToId.get(ts.mcpSlug);
+        if (!mcpId) {
+          errors.push(`Tool setting references unknown MCP slug: "${ts.mcpSlug}"`);
+          continue;
+        }
+        try {
+          this.db.insert(schema.exposedTools).values({
+            mcpId,
+            toolName: ts.toolName,
+            exposed: ts.exposed ?? false,
+            pinned: ts.pinned ?? false,
+          }).run();
+          created++;
+        } catch (e: any) {
+          errors.push(`Failed to restore tool setting ${ts.mcpSlug}/${ts.toolName}: ${e.message}`);
+        }
       }
     }
 

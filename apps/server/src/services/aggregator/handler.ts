@@ -65,6 +65,13 @@ export class AggregatedHandler {
       return;
     }
 
+    // Validate session exists — return 404 per MCP spec so client re-initializes
+    const sessionStore = this.aggregator.getSessionStore();
+    if (!sessionStore.get(sessionId)) {
+      reply.status(404).send({ error: `Session not found: ${sessionId}` });
+      return;
+    }
+
     // ── Notification (no id) ──
     const isNotification = id === undefined || id === null;
     if (isNotification) {

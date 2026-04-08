@@ -25,7 +25,7 @@ export function App() {
         <nav className="topbar">
           <div className="topbar-brand">
             <h1 className="topbar-title">MCP Hub Local</h1>
-            <span className="topbar-version">v0.1.0</span>
+            <span className="topbar-version">v{__APP_VERSION__}</span>
           </div>
           <ul className="nav-list">
             {navItems.map(item => (

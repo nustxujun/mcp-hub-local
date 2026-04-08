@@ -444,7 +444,7 @@ export class RuntimePoolService {
         method: 'initialize',
         id: 1,
         params: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-03-26',
           capabilities: {},
           clientInfo: { name: 'local-mcp-hub', version: '0.1.0' },
         },

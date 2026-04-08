@@ -128,6 +128,28 @@ export function SettingsPage() {
       </div>
 
       <div className="card">
+        <h3 style={{ fontSize: 16, marginBottom: 4 }}>
+          PTC (Programmatic Tool Calling)
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 'normal', marginLeft: 8 }}>⚗️ Preview features</span>
+        </h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
+          Enable PTC mode. When enabled, AI clients will only see <code>search_tools</code> and <code>execute_code</code> instead of individual MCP tools.
+          AI can search for available tools and write code to call them.
+        </p>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={settings.enablePTC !== false}
+            onChange={e => setSettings(s => ({ ...s, enablePTC: e.target.checked }))}
+          />
+          <span>Enable PTC</span>
+        </label>
+        <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 8 }}>
+          Default: enabled. When on, <code>tools/list</code> returns only <code>search_tools</code> and <code>execute_code</code>. Existing sessions need to reconnect.
+        </p>
+      </div>
+
+      <div className="card">
         <h3 style={{ fontSize: 16, marginBottom: 16 }}>Auto-Sync Clients</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
           Select which clients should receive automatic MCP configuration sync when workspace bindings change.

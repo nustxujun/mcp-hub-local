@@ -4,10 +4,16 @@ import type { WorkspaceService } from '../workspace.js';
 import type { McpRegistryService } from '../mcp-registry.js';
 import type { LogService } from '../log.js';
 import type { StatsService } from '../stats.js';
+import type { SettingsService } from '../settings.js';
+import { eq } from 'drizzle-orm';
+import { schema, type HubDatabase } from '../../db/index.js';
 import { SessionStore, type AggregatedSession, type BackendEntry, type BackendStatus } from './session-store.js';
 import { prefixName, parsePrefixedName } from './name-mapper.js';
+import { PTCService, HUB_TOOL_SEARCH, HUB_TOOL_EXECUTE, HUB_TOOLS_DEFINITIONS } from './ptc.js';
 
 export class McpAggregator {
+  private ptcService = new PTCService();
+
   constructor(
     private sessionStore: SessionStore,
     private runtimePool: RuntimePoolService,
@@ -15,6 +21,8 @@ export class McpAggregator {
     private registry: McpRegistryService,
     private logService: LogService,
     private statsService: StatsService,
+    private settingsService: SettingsService,
+    private db: HubDatabase,
   ) {}
 
   // ── Protocol: initialize ──
@@ -87,7 +95,7 @@ export class McpAggregator {
       jsonrpc: '2.0',
       id,
       result: {
-        protocolVersion: '2024-11-05',
+        protocolVersion: '2025-03-26',
         capabilities: {
           tools: { listChanged: true },
           resources: { listChanged: true },
@@ -144,6 +152,7 @@ export class McpAggregator {
       }
       // After each backend finishes (success or error), invalidate caches and notify
       session.cachedTools = null;
+      session.cachedToolSignatures = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
       this.pushToolsListChanged(session);
@@ -180,7 +189,7 @@ export class McpAggregator {
       method: 'initialize',
       id: initId,
       params: {
-        protocolVersion: '2024-11-05',
+        protocolVersion: '2025-03-26',
         capabilities: {},
         clientInfo: { name: 'mcp-hub-local', version: '0.1.0' },
       },
@@ -299,8 +308,57 @@ export class McpAggregator {
 
   // ── tools/list ──
 
+  private async isPTCEnabled(): Promise<boolean> {
+    const setting = await this.settingsService.get<boolean>('enablePTC');
+    // Default to true when setting doesn't exist
+    return setting !== false;
+  }
+
+  /** Get the set of exposed tool names per MCP (mcpId → Set<toolName>) */
+  private async getExposedToolsMap(): Promise<Map<number, Set<string>>> {
+    const rows = await this.db.select().from(schema.exposedTools);
+    const map = new Map<number, Set<string>>();
+    for (const row of rows) {
+      if (!row.exposed) continue;
+      let set = map.get(row.mcpId);
+      if (!set) { set = new Set(); map.set(row.mcpId, set); }
+      set.add(row.toolName);
+    }
+    return map;
+  }
+
+  /** Get the set of pinned tool names per MCP (mcpId → Set<toolName>) */
+  private async getPinnedToolsMap(): Promise<Map<number, Set<string>>> {
+    const rows = await this.db.select().from(schema.exposedTools);
+    const map = new Map<number, Set<string>>();
+    for (const row of rows) {
+      if (!row.pinned) continue;
+      let set = map.get(row.mcpId);
+      if (!set) { set = new Set(); map.set(row.mcpId, set); }
+      set.add(row.toolName);
+    }
+    return map;
+  }
+
+  /** Filter cached tools to only those marked as exposed in the DB */
+  private filterExposedTools(cachedTools: any[], exposedMap: Map<number, Set<string>>, session: AggregatedSession): any[] {
+    return cachedTools.filter(tool => {
+      const backend = session.backends.get(tool._mcpSlug);
+      if (!backend) return false;
+      const set = exposedMap.get(backend.mcpId);
+      return set?.has(tool._originalName);
+    });
+  }
+
   private async handleToolsList(session: AggregatedSession, id: number | string, params?: any): Promise<object> {
+    const ptcEnabled = await this.isPTCEnabled();
+
     if (session.cachedTools) {
+      if (ptcEnabled) {
+        const exposedMap = await this.getExposedToolsMap();
+        const exposedTools = this.filterExposedTools(session.cachedTools, exposedMap, session);
+        return { jsonrpc: '2.0', id, result: { tools: [...HUB_TOOLS_DEFINITIONS, ...exposedTools] } };
+      }
       return { jsonrpc: '2.0', id, result: { tools: session.cachedTools } };
     }
 
@@ -323,6 +381,8 @@ export class McpAggregator {
           ...tool,
           name: prefixName(slug, tool.name),
           description: tool.description ? `[${slug}] ${tool.description}` : `[${slug}]`,
+          _mcpSlug: slug,
+          _originalName: tool.name,
         }));
       } catch (err) {
         this.logService.append({
@@ -345,6 +405,24 @@ export class McpAggregator {
     }
 
     session.cachedTools = allTools;
+
+    // Generate TS function signatures for PTC feature
+    if (ptcEnabled) {
+      const signatures = allTools.flatMap(tool => {
+        const slug = tool._mcpSlug || '';
+        const origName = tool._originalName || tool.name;
+        return this.ptcService.generateSignature(
+          { name: origName, description: tool.description, inputSchema: tool.inputSchema },
+          slug,
+        );
+      });
+      session.cachedToolSignatures = signatures;
+
+      const exposedMap = await this.getExposedToolsMap();
+      const exposedTools = this.filterExposedTools(allTools, exposedMap, session);
+      return { jsonrpc: '2.0', id, result: { tools: [...HUB_TOOLS_DEFINITIONS, ...exposedTools] } };
+    }
+
     return { jsonrpc: '2.0', id, result: { tools: allTools } };
   }
 
@@ -353,6 +431,11 @@ export class McpAggregator {
   private async handleToolsCall(session: AggregatedSession, id: number | string, params: any): Promise<object> {
     if (!params?.name) {
       return { jsonrpc: '2.0', id, error: { code: -32602, message: 'Missing tool name' } };
+    }
+
+    // ── Intercept Hub built-in tools ──
+    if (params.name === HUB_TOOL_SEARCH || params.name === HUB_TOOL_EXECUTE) {
+      return this.handleHubToolCall(session, id, params);
     }
 
     let mcpSlug: string;
@@ -441,6 +524,119 @@ export class McpAggregator {
       recordStats(false, 0, undefined, undefined, String(err));
       return { jsonrpc: '2.0', id, error: { code: -32603, message: `Backend call failed: ${err}` } };
     }
+  }
+
+  // ── Hub built-in tools (search_tools, execute_code) ──
+
+  private async handleHubToolCall(session: AggregatedSession, id: number | string, params: any): Promise<object> {
+    const toolName = params.name;
+    const args = params.arguments || {};
+    const startTime = Date.now();
+    const requestStr = JSON.stringify(args);
+
+    const recordHubStats = (success: boolean, responseStr: string, error?: string) => {
+      this.statsService.record({
+        sessionId: session.sessionId,
+        workspaceId: session.workspaceId,
+        mcpId: null,
+        mcpSlug: '_hub',
+        toolName,
+        success,
+        durationMs: Date.now() - startTime,
+        requestSize: requestStr.length,
+        responseSize: responseStr.length,
+        error,
+        requestBody: requestStr,
+        responseBody: responseStr,
+      });
+    };
+
+    // Ensure we have cached tools & signatures
+    if (!session.cachedTools) {
+      // Trigger a tools/list fanout to populate caches
+      await this.handleToolsList(session, 0, {});
+    }
+
+    if (toolName === HUB_TOOL_SEARCH) {
+      const filter = args.filter || '';
+      const signatures = session.cachedToolSignatures || [];
+      const matches = this.ptcService.searchTools(signatures, filter);
+
+      // Pinned tools always appear in results
+      const pinnedMap = await this.getPinnedToolsMap();
+      const pinnedSigs = signatures.filter(sig => {
+        const backend = session.backends.get(sig.mcpSlug);
+        if (!backend) return false;
+        return pinnedMap.get(backend.mcpId)?.has(sig.originalName);
+      });
+      // Merge: pinned first (deduplicated), then matches
+      const matchSet = new Set(matches.map(m => m.prefixedName));
+      const pinnedOnly = pinnedSigs.filter(s => !matchSet.has(s.prefixedName));
+      const merged = [...pinnedOnly, ...matches];
+
+      // Build plain text output
+      const pinnedLabel = pinnedOnly.length > 0 ? `\n[${pinnedOnly.length} pinned tool(s) always shown]\n` : '';
+      const header = `Found ${matches.length} of ${signatures.length} tools${pinnedLabel}`;
+      const body = merged.map(entry => entry.signature).join('\n\n');
+      const text = body ? `${header}\n\n${body}` : header;
+
+      recordHubStats(true, text);
+
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{
+            type: 'text',
+            text,
+          }],
+        },
+      };
+    }
+
+    if (toolName === HUB_TOOL_EXECUTE) {
+      const code = args.code;
+      if (!code || typeof code !== 'string') {
+        const errMsg = 'Missing or invalid "code" parameter';
+        recordHubStats(false, '', errMsg);
+        return { jsonrpc: '2.0', id, error: { code: -32602, message: errMsg } };
+      }
+
+      const signatures = session.cachedToolSignatures || [];
+
+      // Bridge function: routes tool calls to actual MCP backends
+      const callTool = async (mcpSlug: string, toolNameInner: string, toolArgs: any): Promise<any> => {
+        const prefixed = prefixName(mcpSlug, toolNameInner);
+        const response = await this.handleToolsCall(session, Date.now(), {
+          name: prefixed,
+          arguments: toolArgs,
+        }) as any;
+
+        if (response?.error) {
+          throw new Error(response.error.message || 'Tool call failed');
+        }
+        return response?.result;
+      };
+
+      const execResult = await this.ptcService.executeCode(code, signatures, callTool);
+
+      const responseStr = JSON.stringify({ result: execResult.result, logs: execResult.logs }, null, 2);
+      const hasError = execResult.logs.some(l => l.includes('[EXECUTION ERROR]') || l.includes('[TIMEOUT]'));
+      recordHubStats(!hasError, responseStr, hasError ? execResult.logs.filter(l => l.includes('[EXECUTION ERROR]') || l.includes('[TIMEOUT]')).join('; ') : undefined);
+
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{
+            type: 'text',
+            text: responseStr,
+          }],
+        },
+      };
+    }
+
+    return { jsonrpc: '2.0', id, error: { code: -32602, message: `Unknown Hub tool: ${toolName}` } };
   }
 
   // ── resources/list ──
@@ -629,6 +825,15 @@ export class McpAggregator {
     return this.sessionStore;
   }
 
+  /** Invalidate cached tools in all sessions so exposed-tools changes take effect. */
+  invalidateAllToolCaches(): void {
+    for (const session of this.sessionStore.all()) {
+      session.cachedTools = null;
+      session.cachedToolSignatures = null;
+      this.pushToolsListChanged(session);
+    }
+  }
+
   // ── Restart a single session: tear down all backends, re-read bindings, re-init ──
 
   async restartSession(sessionId: string): Promise<boolean> {
@@ -664,6 +869,7 @@ export class McpAggregator {
 
     // 4. Clear caches
     session.cachedTools = null;
+    session.cachedToolSignatures = null;
     session.cachedResources = null;
     session.cachedPrompts = null;
 
@@ -768,6 +974,7 @@ export class McpAggregator {
       }
       // After each backend, invalidate caches and notify
       session.cachedTools = null;
+      session.cachedToolSignatures = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
       this.pushToolsListChanged(session);
@@ -867,6 +1074,7 @@ export class McpAggregator {
             })
             .finally(() => {
               session.cachedTools = null;
+              session.cachedToolSignatures = null;
               session.cachedResources = null;
               session.cachedPrompts = null;
               this.pushToolsListChanged(session);
@@ -876,6 +1084,7 @@ export class McpAggregator {
 
       // 3. Clear caches
       session.cachedTools = null;
+      session.cachedToolSignatures = null;
       session.cachedResources = null;
       session.cachedPrompts = null;
 
