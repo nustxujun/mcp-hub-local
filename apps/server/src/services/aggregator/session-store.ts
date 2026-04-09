@@ -82,4 +82,24 @@ export class SessionStore {
   all(): AggregatedSession[] {
     return [...this.sessions.values()];
   }
+
+  /**
+   * Clear all sessions. Called during shutdown to remove active sessions and
+   * close any SSE connections. This allows garbage collection and prevents
+   * database locks from lingering EventEmitters.
+   */
+  clearAll(): void {
+    // Close all SSE connections first
+    for (const session of this.sessions.values()) {
+      if (session.sseWriter) {
+        try {
+          session.sseWriter.end();
+        } catch {
+          // Already closed
+        }
+      }
+    }
+    // Clear all sessions
+    this.sessions.clear();
+  }
 }

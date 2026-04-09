@@ -108,6 +108,14 @@ export class LogService extends EventEmitter {
     await this.db.delete(schema.logs);
   }
 
+  /**
+   * Remove all event listeners. Called during shutdown to prevent holding references
+   * to database and allowing proper garbage collection.
+   */
+  clearAllListeners(): void {
+    this.removeAllListeners('log');
+  }
+
   private toDto(row: typeof schema.logs.$inferSelect): LogEntry {
     return {
       id: row.id,

@@ -209,16 +209,48 @@ export class RuntimePoolService {
     await this.updateInstanceStatus(handle.instanceId, 'stopped');
 
     if (handle.process) {
+      // Remove all event listeners BEFORE killing the process to prevent
+      // database writes during shutdown checkpoint
+      handle.process.removeAllListeners('error');
+      handle.process.removeAllListeners('exit');
+      handle.process.stderr?.removeAllListeners('data');
+
+      // Destroy stdio streams to release resources
+      if (handle.stdin && !handle.stdin.destroyed) {
+        try {
+          handle.stdin.destroy();
+        } catch {
+          // Already closed
+        }
+      }
+      if (handle.stdout && !handle.stdout.destroyed) {
+        try {
+          handle.stdout.destroy();
+        } catch {
+          // Already closed
+        }
+      }
+      if (handle.process.stderr && !handle.process.stderr.destroyed) {
+        try {
+          handle.process.stderr.destroy();
+        } catch {
+          // Already closed
+        }
+      }
+
+      // Kill the process with timeout
       handle.process.kill('SIGTERM');
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
           handle.process?.kill('SIGKILL');
           resolve();
         }, 5000);
-        handle.process?.on('exit', () => {
+        // Use a one-time listener to avoid double-subscription issues
+        const exitHandler = () => {
           clearTimeout(timer);
           resolve();
-        });
+        };
+        handle.process?.once('exit', exitHandler);
       });
     }
 

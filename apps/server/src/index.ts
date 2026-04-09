@@ -304,14 +304,31 @@ async function main() {
     return reply.redirect('/app/');
   });
 
+
   const shutdown = async () => {
     app.log.info('Shutting down...');
     removePidFile();
     healthCheck.stop();
     await runtimePool.stopAll();
+
+    // ── Clear all active sessions to remove EventEmitter listeners ──
+    sessionStore.clearAll();
+    
+    // ── Clear all LogService listeners to avoid database writes during checkpoint ──
+    logService.clearAllListeners();
+
+    // ── Close app and wait for all connections to drain ──
     await app.close();
-    // Flush WAL to main db and release -wal/-shm files before closing
-    sqlite.pragma('wal_checkpoint(TRUNCATE)');
+
+    // ── Now that all services are stopped, flush WAL to main db ──
+    // This checkpoint MUST happen after all database activity has stopped
+    // to avoid concurrent writes blocking the truncation.
+    try {
+      sqlite.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (err: any) {
+      app.log.warn(`WAL checkpoint failed: ${err.message}`);
+    }
+    
     sqlite.close();
     process.exit(0);
   };
