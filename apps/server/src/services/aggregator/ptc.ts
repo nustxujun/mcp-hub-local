@@ -143,7 +143,7 @@ function detectPython(): string {
 
   for (const cmd of candidates) {
     try {
-      execFileSync(cmd, ['--version'], { stdio: 'pipe', timeout: 5000 });
+      execFileSync(cmd, ['--version'], { stdio: 'pipe', timeout: 5000, windowsHide: true });
       cachedPythonCmd = cmd;
       return cmd;
     } catch {
@@ -441,6 +441,7 @@ _real_stdout.flush()
       const proc = spawn(pythonCmd, ['-u', '-c', script], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+        windowsHide: true,
       });
 
       let stderrBuf = '';
