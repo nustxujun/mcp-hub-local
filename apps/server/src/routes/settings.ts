@@ -50,7 +50,11 @@ export function registerSettingsRoutes(
     if (!body || !body.version) {
       return reply.status(400).send({ error: 'Invalid config format: missing version field' });
     }
-    const result = await configIO.importConfig(body);
-    return result;
+    const query = request.query as { mode?: string } | undefined;
+    const mode = query?.mode === 'merge' ? 'merge' : 'replace';
+    if (mode === 'merge') {
+      return configIO.mergeConfig(body);
+    }
+    return configIO.importConfig(body);
   });
 }

@@ -83,4 +83,5 @@ export const shutdownServer = () => request<{ ok: boolean }>('/api/shutdown', { 
 
 // ── Config Import / Export ──
 export const exportConfig = () => request<any>('/api/config/export');
-export const importConfig = (data: any) => request<any>('/api/config/import', { method: 'POST', body: JSON.stringify(data) });
+export const importConfig = (data: any, mode: 'replace' | 'merge' = 'replace') =>
+  request<any>(`/api/config/import?mode=${mode}`, { method: 'POST', body: JSON.stringify(data) });

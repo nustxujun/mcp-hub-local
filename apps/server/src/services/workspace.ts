@@ -53,6 +53,7 @@ export class WorkspaceService {
       }
       updates.slug = input.slug;
     }
+    if (input.rootPath !== undefined) updates.rootPath = input.rootPath;
     if (input.description !== undefined) updates.description = input.description;
 
     await this.db.update(schema.workspaces).set(updates).where(eq(schema.workspaces.id, id));

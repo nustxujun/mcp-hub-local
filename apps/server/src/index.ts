@@ -30,15 +30,18 @@ import { DEFAULT_PORT } from '@mcp-hub-local/shared';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function parseArgs(): { port?: number; config?: string; daemon?: boolean } {
+function parseArgs(): { port?: number; config?: string; mergeConfig?: string; daemon?: boolean } {
   const args = process.argv.slice(2);
-  const result: { port?: number; config?: string; daemon?: boolean } = {};
+  const result: { port?: number; config?: string; mergeConfig?: string; daemon?: boolean } = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--port' && args[i + 1]) {
       result.port = parseInt(args[i + 1]);
       i++;
     } else if (args[i] === '--config' && args[i + 1]) {
       result.config = args[i + 1];
+      i++;
+    } else if (args[i] === '--merge-config' && args[i + 1]) {
+      result.mergeConfig = args[i + 1];
       i++;
     } else if (args[i] === '--daemon') {
       result.daemon = true;
@@ -242,6 +245,26 @@ async function main() {
     }
   }
 
+  // CLI: merge config file on startup (runs after --config replace, if both are provided)
+  if (cliArgs.mergeConfig) {
+    const mergeConfigPath = path.resolve(cliArgs.mergeConfig);
+    if (!fs.existsSync(mergeConfigPath)) {
+      app.log.error(`Merge config file not found: ${mergeConfigPath}`);
+      process.exit(1);
+    }
+    try {
+      const configData = JSON.parse(fs.readFileSync(mergeConfigPath, 'utf-8'));
+      const result = await configIO.mergeConfig(configData);
+      app.log.info(`Merged config from ${mergeConfigPath}: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
+      if (result.errors.length > 0) {
+        app.log.warn(`Merge warnings: ${result.errors.join('; ')}`);
+      }
+    } catch (e: any) {
+      app.log.error(`Failed to merge config: ${e.message}`);
+      process.exit(1);
+    }
+  }
+
   registerMcpRoutes(app, registry, healthCheck, runtimePool, aggregator, db);
   registerWorkspaceRoutes(app, workspaceService, registry, configSync, settingsService, aggregator);
   registerLogRoutes(app, logService);
@@ -251,6 +274,8 @@ async function main() {
 
   // Identity endpoint — used by killPreviousInstance to confirm this is mcp-hub-local
   app.get('/api/identity', async () => ({ app: APP_IDENTIFIER }));
+
+  app.get('/api/cwd', async () => ({ cwd: process.cwd() }));
 
   app.all('/w/:workspaceSlug', async (request, reply) => {
     return handler.handleRequest(

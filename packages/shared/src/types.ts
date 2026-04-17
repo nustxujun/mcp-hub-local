@@ -72,6 +72,7 @@ export interface CreateWorkspaceInput {
 export interface UpdateWorkspaceInput {
   name?: string;
   slug?: string;
+  rootPath?: string;
   description?: string;
 }
 

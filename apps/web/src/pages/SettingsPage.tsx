@@ -12,6 +12,7 @@ export function SettingsPage() {
   const [exporting, setExporting] = useState(false);
   const [clearingLogs, setClearingLogs] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{ config: any; fileName: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -105,23 +106,43 @@ export function SettingsPage() {
   const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    setImporting(true);
     setImportStatus(null);
     try {
       const text = await file.text();
       const config = JSON.parse(text);
-      const result = await api.importConfig(config);
-      const msg = `Import complete: ${result.created} items created.` +
+      setPendingImport({ config, fileName: file.name });
+    } catch (err: any) {
+      setImportStatus({ message: `Failed to parse config file: ${err.message}`, type: 'error' });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const runImport = async (mode: 'replace' | 'merge') => {
+    if (!pendingImport) return;
+    const { config } = pendingImport;
+    setPendingImport(null);
+    setImporting(true);
+    setImportStatus(null);
+    try {
+      const result = await api.importConfig(config, mode);
+      const stats: string[] = [];
+      if (typeof result.created === 'number') stats.push(`${result.created} created`);
+      if (typeof result.updated === 'number') stats.push(`${result.updated} updated`);
+      if (typeof result.skipped === 'number') stats.push(`${result.skipped} skipped`);
+      const summary = stats.length > 0 ? stats.join(', ') : 'no changes';
+      const msg = `${mode === 'merge' ? 'Merge' : 'Replace'} complete: ${summary}.` +
         (result.errors?.length ? ` Warnings: ${result.errors.join('; ')}` : '');
       setImportStatus({ message: msg, type: result.errors?.length ? 'error' : 'success' });
     } catch (e: any) {
       setImportStatus({ message: `Import failed: ${e.message}`, type: 'error' });
     } finally {
       setImporting(false);
-      // Reset file input so same file can be selected again
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const cancelImport = () => {
+    setPendingImport(null);
   };
 
   return (
@@ -219,7 +240,7 @@ export function SettingsPage() {
         <h3 style={{ fontSize: 16, marginBottom: 16 }}>Configuration</h3>
         <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 12 }}>
           Export or import your complete hub configuration (MCPs, Workspaces, and Bindings).
-          Import will replace all existing data.
+          On import you can choose to merge into existing data or replace it entirely.
         </p>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <button className="btn btn-ghost" onClick={handleExport} disabled={exporting}>
@@ -261,6 +282,50 @@ export function SettingsPage() {
       <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
         {saving ? 'Saving...' : 'Save Settings'}
       </button>
+
+      {pendingImport && (
+        <div
+          onClick={cancelImport}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="card"
+            style={{ maxWidth: 480, width: '90%', margin: 0 }}
+          >
+            <h3 style={{ fontSize: 16, marginBottom: 12 }}>Import Configuration</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 8 }}>
+              File: <code>{pendingImport.fileName}</code>
+            </p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16 }}>
+              Choose how to apply this config:
+            </p>
+            <ul style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 16, paddingLeft: 20 }}>
+              <li><strong>Merge</strong>: keep existing entries, add new ones, update changed fields. Nothing is deleted.</li>
+              <li><strong>Replace</strong>: erase all current MCPs, workspaces, bindings and tool settings, then reimport.</li>
+            </ul>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-ghost" onClick={cancelImport} disabled={importing}>
+                Cancel
+              </button>
+              <button className="btn btn-ghost" onClick={() => runImport('merge')} disabled={importing}>
+                Merge
+              </button>
+              <button className="btn btn-danger" onClick={() => runImport('replace')} disabled={importing}>
+                Replace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
