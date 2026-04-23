@@ -40,12 +40,30 @@ export function WorkspacesPage() {
   const [wsSearch, setWsSearch] = useState('');
   const [mcpSearch, setMcpSearch] = useState('');
   const [connStatus, setConnStatus] = useState<Record<number, ConnStatus>>({});
+  const [port, setPort] = useState<number>(3000);
+  const [copied, setCopied] = useState(false);
 
   const load = async () => {
     const [ws, m] = await Promise.all([api.listWorkspaces(), api.listMcps()]);
     setWorkspaces(ws);
     setMcps(m);
     return m;
+  };
+
+  useEffect(() => {
+    api.getSettings().then(s => {
+      if (s?.port) setPort(s.port);
+    }).catch(() => {});
+  }, []);
+
+  const mcpUrl = selectedWs ? `http://localhost:${port}/w/${selectedWs.slug}` : '';
+
+  const handleCopyUrl = () => {
+    if (!mcpUrl) return;
+    navigator.clipboard.writeText(mcpUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => {});
   };
 
   const loadHealth = async (mcpList: McpDef[]) => {
@@ -238,7 +256,42 @@ export function WorkspacesPage() {
           {selectedWs ? (
             <div className="card" style={{ flex: 1 }}>
               <div className="card-header">
-                <h3 style={{ fontSize: 16 }}>MCP Bindings — {selectedWs.name}</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', minWidth: 0 }}>
+                  <h3 style={{ fontSize: 16 }}>MCP Bindings — {selectedWs.name}</h3>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 8px',
+                      background: 'var(--bg-hover)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)',
+                      maxWidth: '100%',
+                    }}
+                  >
+                    <code
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--accent)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                      title={mcpUrl}
+                    >
+                      {mcpUrl}
+                    </code>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={handleCopyUrl}
+                      title="Copy MCP URL"
+                      style={{ padding: '2px 8px', fontSize: 11, flexShrink: 0 }}
+                    >
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="btn btn-ghost btn-sm" onClick={handleSync}>Sync Configs</button>
                   <ConfirmButton onConfirm={() => handleDelete(selectedWs.id)}>Delete</ConfirmButton>
