@@ -148,8 +148,15 @@ export function SettingsPage() {
   return (
     <div>
       <div className="page-header">
-        <h2 className="page-title">Settings</h2>
-        <p className="page-subtitle">Configure hub settings</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 className="page-title">Settings</h2>
+            <p className="page-subtitle">Configure hub settings</p>
+          </div>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
       </div>
 
       <div className="card">
@@ -173,13 +180,13 @@ export function SettingsPage() {
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
           <input
             type="checkbox"
-            checked={settings.enablePTC !== false}
+            checked={settings.enablePTC === true}
             onChange={e => setSettings(s => ({ ...s, enablePTC: e.target.checked }))}
           />
           <span>Enable PTC</span>
         </label>
         <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 8 }}>
-          Default: enabled. When on, <code>tools/list</code> returns only <code>search_tools</code> and <code>execute_code</code>. Existing sessions need to reconnect.
+          Default: disabled. When on, <code>tools/list</code> returns only <code>search_tools</code> and <code>execute_code</code> (plus tools marked as Expose). Existing sessions need to reconnect.
         </p>
       </div>
 
@@ -278,10 +285,6 @@ export function SettingsPage() {
         </button>
         <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 8 }}>Requires manual restart</span>
       </div>
-
-      <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-        {saving ? 'Saving...' : 'Save Settings'}
-      </button>
 
       {pendingImport && (
         <div

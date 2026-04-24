@@ -311,8 +311,8 @@ export class McpAggregator {
 
   private async isPTCEnabled(): Promise<boolean> {
     const setting = await this.settingsService.get<boolean>('enablePTC');
-    // Default to true when setting doesn't exist
-    return setting !== false;
+    // Default to false when setting doesn't exist
+    return setting === true;
   }
 
   /** Get the set of exposed tool names per MCP (mcpId → Set<toolName>) */
