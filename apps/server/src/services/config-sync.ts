@@ -5,7 +5,7 @@ import type { McpRegistryService } from './mcp-registry.js';
 import type { SettingsService } from './settings.js';
 import type { LogService } from './log.js';
 import { getProfile } from '@mcp-hub-local/client-profiles';
-import type { McpEndpointInfo } from '@mcp-hub-local/client-profiles';
+import type { McpEndpointInfo, RuleSyncContext } from '@mcp-hub-local/client-profiles';
 
 export class ConfigSyncService {
   constructor(
@@ -33,24 +33,55 @@ export class ConfigSyncService {
     const portValue = await this.settingsService.get<number>('port');
     const port = portValue || DEFAULT_PORT;
 
+    const hubEndpointUrl = `http://localhost:${port}/w/${workspace.slug}`;
+
     const endpoints: McpEndpointInfo[] = enabledBindings.length > 0
       ? [{
           name: 'mcp-hub-local',
           slug: workspace.slug,
-          url: `http://localhost:${port}/w/${workspace.slug}`,
+          url: hubEndpointUrl,
         }]
       : [];
+
+    const enabledMcps = await Promise.all(
+      enabledBindings.map(b => this.registry.getById(b.mcpId)),
+    );
+    const mcpNames = enabledMcps
+      .filter((m): m is NonNullable<typeof m> => m !== null)
+      .map(m => m.displayName || m.name);
+
+    const ruleCtx: RuleSyncContext = {
+      workspaceName: workspace.name,
+      workspaceSlug: workspace.slug,
+      hubEndpointUrl,
+      mcpNames,
+    };
 
     const synced: ClientType[] = [];
     const errors: string[] = [];
 
     for (const clientType of clients) {
+      let profile;
       try {
-        const profile = getProfile(clientType);
+        profile = getProfile(clientType);
+      } catch (err) {
+        const msg = `Failed to load profile for ${clientType}: ${err}`;
+        errors.push(msg);
+        await this.logService.append({
+          level: 'error',
+          category: 'config-sync',
+          workspaceId,
+          message: msg,
+        });
+        continue;
+      }
+
+      let configOk = false;
+      try {
         const configPath = profile.getConfigPath(workspace.rootPath);
         const mcpConfig = profile.generateMcpConfig(endpoints);
         await profile.writeManagedConfig(configPath, mcpConfig);
-        synced.push(clientType);
+        configOk = true;
 
         await this.logService.append({
           level: 'info',
@@ -59,7 +90,7 @@ export class ConfigSyncService {
           message: `Synced ${clientType} config to ${configPath}`,
         });
       } catch (err) {
-        const msg = `Failed to sync ${clientType}: ${err}`;
+        const msg = `Failed to sync ${clientType} config: ${err}`;
         errors.push(msg);
         await this.logService.append({
           level: 'error',
@@ -67,6 +98,33 @@ export class ConfigSyncService {
           workspaceId,
           message: msg,
         });
+      }
+
+      let ruleOk = false;
+      try {
+        const rulePath = profile.getRulePath(workspace.rootPath);
+        await profile.writeManagedRule(rulePath, ruleCtx);
+        ruleOk = true;
+
+        await this.logService.append({
+          level: 'info',
+          category: 'config-sync',
+          workspaceId,
+          message: `Synced ${clientType} rule to ${rulePath}`,
+        });
+      } catch (err) {
+        const msg = `Failed to sync ${clientType} rule: ${err}`;
+        errors.push(msg);
+        await this.logService.append({
+          level: 'error',
+          category: 'config-sync',
+          workspaceId,
+          message: msg,
+        });
+      }
+
+      if (configOk && ruleOk) {
+        synced.push(clientType);
       }
     }
 

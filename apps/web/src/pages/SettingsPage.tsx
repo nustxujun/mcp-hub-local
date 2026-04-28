@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import * as api from '../api';
 
-const CLIENT_OPTIONS = ['cursor', 'claude', 'codex', 'gemini'] as const;
+const CLIENT_OPTIONS = ['cursor', 'claude', 'codex', 'gemini', 'codebuddy'] as const;
 
 export function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, any>>({});

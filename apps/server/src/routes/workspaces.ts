@@ -96,7 +96,7 @@ export function registerWorkspaceRoutes(
     const endpoints = await buildEndpoints(workspaceId, ws.slug, port, workspaceService, registry);
 
     const result: Record<string, unknown> = {};
-    for (const ct of ['cursor', 'claude', 'codex', 'gemini'] as ClientType[]) {
+    for (const ct of ['cursor', 'claude', 'codex', 'gemini', 'codebuddy'] as ClientType[]) {
       const profile = getProfile(ct);
       result[ct] = profile.generateMcpConfig(endpoints);
     }

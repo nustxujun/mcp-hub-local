@@ -121,7 +121,7 @@ export function runMigrations(sqlite: Database.Database) {
   if (!existing) {
     sqlite.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?)').run(
       'syncClients',
-      JSON.stringify({ clients: ['cursor', 'claude'] })
+      JSON.stringify({ clients: ['cursor', 'claude', 'codebuddy'] })
     );
     sqlite.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?)').run(
       'logOptions',

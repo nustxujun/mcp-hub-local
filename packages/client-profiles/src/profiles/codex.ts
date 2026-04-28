@@ -1,7 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as TOML from 'smol-toml';
-import type { ClientProfile, McpEndpointInfo } from '../types.js';
+import type { ClientProfile, McpEndpointInfo, RuleSyncContext } from '../types.js';
+import { applyManagedBlock, buildRuleBody } from '../marker.js';
 
 export const codexProfile: ClientProfile = {
   clientType: 'codex',
@@ -32,5 +33,22 @@ export const codexProfile: ClientProfile = {
     existing.mcp_servers = mcpConfig.mcp_servers;
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, TOML.stringify(existing as any), 'utf-8');
+  },
+
+  getRulePath(workspaceRoot: string) {
+    return path.join(workspaceRoot, 'AGENTS.md');
+  },
+
+  async writeManagedRule(filePath: string, ctx: RuleSyncContext) {
+    let existing = '';
+    try {
+      existing = await fs.readFile(filePath, 'utf-8');
+    } catch {
+      existing = '';
+    }
+    const body = buildRuleBody(ctx);
+    const next = applyManagedBlock(existing, body);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, next, 'utf-8');
   },
 };

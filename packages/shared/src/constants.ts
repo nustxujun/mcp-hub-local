@@ -9,7 +9,7 @@ export const MAX_NAME_LENGTH = 128;
 
 export const DEFAULT_INSTANCE_MODE = 'per-workspace' as const;
 
-export const SUPPORTED_CLIENTS = ['cursor', 'claude', 'codex', 'gemini'] as const;
+export const SUPPORTED_CLIENTS = ['cursor', 'claude', 'codex', 'gemini', 'codebuddy'] as const;
 
 export const DEFAULT_LOG_PAGE_SIZE = 50;
 export const DEFAULT_LOG_RETENTION_DAYS = 30;

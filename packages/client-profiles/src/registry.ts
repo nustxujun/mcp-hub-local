@@ -4,12 +4,14 @@ import { cursorProfile } from './profiles/cursor.js';
 import { claudeProfile } from './profiles/claude.js';
 import { codexProfile } from './profiles/codex.js';
 import { geminiProfile } from './profiles/gemini.js';
+import { codebuddyProfile } from './profiles/codebuddy.js';
 
 const profiles: Record<ClientType, ClientProfile> = {
   cursor: cursorProfile,
   claude: claudeProfile,
   codex: codexProfile,
   gemini: geminiProfile,
+  codebuddy: codebuddyProfile,
 };
 
 export function getProfile(clientType: ClientType): ClientProfile {

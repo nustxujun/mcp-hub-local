@@ -127,7 +127,7 @@ export interface LogEntry {
 
 // ── Settings ──
 
-export type ClientType = 'cursor' | 'claude' | 'codex' | 'gemini';
+export type ClientType = 'cursor' | 'claude' | 'codex' | 'gemini' | 'codebuddy';
 
 export interface SyncClientsSettings {
   clients: ClientType[];
