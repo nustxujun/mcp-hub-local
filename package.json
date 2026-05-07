@@ -1,6 +1,6 @@
 {
   "name": "mcp-hub-local",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "type": "module",
   "bin": {
     "mcp-hub-local": "./bin/mcp-hub-local.mjs"
