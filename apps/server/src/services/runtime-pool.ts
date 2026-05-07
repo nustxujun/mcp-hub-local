@@ -1,9 +1,35 @@
-import { spawn, type ChildProcess } from 'node:child_process';
-import { eq, and, ne } from 'drizzle-orm';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { eq, and, ne, inArray } from 'drizzle-orm';
 import { schema, type HubDatabase } from '../db/index.js';
 import type { McpDefinition, InstanceMode, StdioTransportConfig } from '@mcp-hub-local/shared';
 import type { LogService } from './log.js';
 import { Readable, Writable } from 'node:stream';
+
+/**
+ * Kill a process tree by pid.
+ *
+ * Why: On Windows, Node's `child.kill()` calls `TerminateProcess` on the
+ * direct child only. Wrapper launchers like `uv.exe` / `npx` / shells spawn
+ * grandchildren that keep running and hold onto resources (e.g. listening
+ * sockets), causing port-already-in-use loops on subsequent restarts.
+ *
+ * On POSIX, when the child was spawned in its own process group, we send
+ * the signal to the negative pid so the entire group dies together.
+ */
+async function killProcessTree(pid: number | undefined, signal: NodeJS.Signals = 'SIGKILL'): Promise<void> {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => {
+      execFile('taskkill', ['/F', '/T', '/PID', String(pid)], () => resolve());
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try { process.kill(pid, signal); } catch { /* already dead */ }
+  }
+}
 
 export interface RuntimeHandle {
   instanceId: number;
@@ -116,6 +142,9 @@ export class RuntimePoolService {
       env: { ...process.env, ...(config.env || {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      // On POSIX, place the child in its own process group so we can
+      // signal the whole tree via process.kill(-pid). No-op on Windows.
+      detached: process.platform !== 'win32',
     });
 
     const now = new Date().toISOString();
@@ -238,20 +267,13 @@ export class RuntimePoolService {
         }
       }
 
-      // Kill the process with timeout
-      handle.process.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          handle.process?.kill('SIGKILL');
-          resolve();
-        }, 5000);
-        // Use a one-time listener to avoid double-subscription issues
-        const exitHandler = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        handle.process?.once('exit', exitHandler);
-      });
+      // We deliberately skip SIGTERM/graceful shutdown and go straight to a
+      // tree-kill. Why: wrappers like uv.exe / npx exit immediately on
+      // SIGTERM and propagate nothing to their python/node grandchildren,
+      // so a graceful path leaves orphan processes holding external ports
+      // (the unrealmcp:9876 case). Always reap the whole tree by pid.
+      const pid = handle.process.pid;
+      await killProcessTree(pid);
     }
 
     this.handles.delete(key);
@@ -428,6 +450,39 @@ export class RuntimePoolService {
     for (const key of keys) {
       await this.stop(key);
     }
+
+    // Reap orphan DB records: rows still flagged starting/running for this
+    // mcpId but with no live in-memory handle. These typically appear when
+    // initialize handshake timed out (handle was discarded but the child
+    // wrapper / its grandchildren are still alive on the OS), or after a
+    // hub crash. We try to taskkill by recorded pid before marking them
+    // stopped so subsequent restarts don't fight an old process for the
+    // same external port.
+    const orphanRows = await this.db.select().from(schema.runtimeInstances)
+      .where(
+        and(
+          eq(schema.runtimeInstances.mcpId, mcpId),
+          inArray(schema.runtimeInstances.status, ['starting', 'running'] as any),
+        )
+      );
+    for (const row of orphanRows) {
+      if (row.pid) {
+        await killProcessTree(row.pid);
+        this.logService.append({
+          level: 'warn',
+          category: 'stdio-lifecycle',
+          mcpId,
+          workspaceId: row.workspaceId,
+          runtimeInstanceId: row.id,
+          message: `Reaped orphan runtime instance pid=${row.pid} (no live handle)`,
+        });
+      }
+      this.db.update(schema.runtimeInstances)
+        .set({ status: 'stopped', endedAt: new Date().toISOString() })
+        .where(eq(schema.runtimeInstances.id, row.id))
+        .run();
+    }
+
     // Remove stopped/error records for this MCP so they don't pile up
     this.db.delete(schema.runtimeInstances)
       .where(
