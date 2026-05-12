@@ -95,6 +95,16 @@ export class RuntimePoolService {
   private handles = new Map<string, RuntimeHandle>();
   // Reference counting for shared instances (singleton / per-workspace)
   private refCounts = new Map<string, number>();
+  /**
+   * In-memory set of MCP ids that the user has explicitly disabled. While an
+   * id is in this set, every call to getOrCreate (regardless of mode) is
+   * rejected — so on-demand spawning paths (new session connect, PATCH config,
+   * Restart All, refreshWorkspaceBindings) all decline to launch a child.
+   *
+   * Intentionally NOT persisted: hub restart is a hard reset and re-enables
+   * everything. If we ever want persistence, add a column to mcpDefinitions.
+   */
+  private disabledMcpIds = new Set<number>();
 
   constructor(
     private db: HubDatabase,
@@ -103,6 +113,21 @@ export class RuntimePoolService {
     // On startup, clean up all instances from previous server processes
     // — they no longer have live processes and their status is stale.
     this.db.delete(schema.runtimeInstances).run();
+  }
+
+  isDisabled(mcpId: number): boolean {
+    return this.disabledMcpIds.has(mcpId);
+  }
+
+  /** Mark/unmark an MCP as user-disabled. Stopping the actual processes is the
+   *  caller's responsibility (see aggregator.onMcpDisabled). */
+  setDisabled(mcpId: number, disabled: boolean): void {
+    if (disabled) this.disabledMcpIds.add(mcpId);
+    else this.disabledMcpIds.delete(mcpId);
+  }
+
+  listDisabled(): number[] {
+    return [...this.disabledMcpIds];
   }
 
   private instanceKey(mcpId: number, mode: InstanceMode, workspaceId?: number | null, sessionId?: string | null): string {
@@ -123,6 +148,13 @@ export class RuntimePoolService {
     cwd?: string,
     sessionId?: string | null,
   ): Promise<RuntimeHandle> {
+    // User-level kill-switch. Throwing here covers every spawn path —
+    // initBackend, startAndInitialize, restartMcpInstances — without each
+    // caller needing its own check. Callers already wrap with try/catch.
+    if (this.disabledMcpIds.has(mcp.id)) {
+      throw new Error(`MCP "${mcp.slug}" is disabled`);
+    }
+
     const key = this.instanceKey(mcp.id, mode, workspaceId, sessionId);
     const existing = this.handles.get(key);
     if (existing) return existing;

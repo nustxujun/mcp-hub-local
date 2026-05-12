@@ -13,7 +13,7 @@ interface McpDef {
   configJson: any;
 }
 
-type ConnStatus = 'checking' | 'ok' | 'fail' | 'starting' | 'error';
+type ConnStatus = 'checking' | 'ok' | 'fail' | 'starting' | 'error' | 'disabled';
 
 const emptyForm = {
   name: '', slug: '', transportKind: 'stdio', instanceMode: 'per-workspace',
@@ -34,6 +34,7 @@ export function McpsPage() {
   const [selectedLocalMcp, setSelectedLocalMcp] = useState<McpDef | null>(null);
   const [instances, setInstances] = useState<any[]>([]);
   const [allInstances, setAllInstances] = useState<any[]>([]);
+  const [disabledIds, setDisabledIds] = useState<Set<number>>(new Set());
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Unified Tools Modal state
@@ -143,12 +144,22 @@ export function McpsPage() {
     }
   }, [mcps]);
 
+  const loadDisabled = useCallback(async () => {
+    try {
+      const { disabled } = await api.listDisabledMcps();
+      setDisabledIds(new Set(disabled));
+    } catch {
+      setDisabledIds(new Set());
+    }
+  }, []);
+
   useEffect(() => {
     load().then(async (data) => {
       await loadCachedHealth(data);
       await loadAllInstances(data);
+      await loadDisabled();
     });
-  }, []);
+  }, [loadDisabled]);
 
   useEffect(() => {
     if (selectedLocalMcp) {
@@ -234,6 +245,18 @@ export function McpsPage() {
     await loadAllInstances();
   };
 
+  const handleToggleDisableMcp = async () => {
+    if (!selectedLocalMcp) return;
+    const id = selectedLocalMcp.id;
+    if (disabledIds.has(id)) {
+      await api.enableMcp(id);
+    } else {
+      await api.disableMcp(id);
+    }
+    await loadDisabled();
+    await loadAllInstances();
+  };
+
   const handleDeleteInstance = async (instanceId: number) => {
     await api.deleteRuntimeInstance(instanceId);
     await loadAllInstances();
@@ -244,7 +267,8 @@ export function McpsPage() {
     const hasSingleton = allInstances.some((i: any) =>
       (i.mcp_id || i.mcpId) === m.id && (i.instance_mode || i.instanceMode) === 'singleton'
     );
-    if (!hasSingleton) {
+    // Skip the auto-start nicety when the user has explicitly disabled this MCP.
+    if (!hasSingleton && !disabledIds.has(m.id)) {
       try { await api.startMcp(m.id); } catch { /* ignore */ }
       await loadAllInstances();
     }
@@ -409,6 +433,10 @@ export function McpsPage() {
   };
 
   const statusDot = (id: number) => {
+    // Disabled is a user-driven kill-switch and takes precedence over whatever
+    // the connectivity probe would otherwise report (probe will see "no
+    // singleton instance" and want to label it Offline — misleading here).
+    if (disabledIds.has(id)) return <span className="status-label status-label-offline">Disabled</span>;
     const s = connStatus[id];
     if (!s || s === 'checking') return <span className="status-label status-label-checking">...</span>;
     if (s === 'starting') return <span className="status-label status-label-loading">Loading</span>;
@@ -533,8 +561,28 @@ export function McpsPage() {
             {selectedLocalMcp ? (
               <div className="card" style={{ flex: 1 }}>
                 <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3 style={{ fontSize: 16 }}>Instances - {selectedLocalMcp.name}</h3>
-                  <button className="btn btn-ghost btn-sm" onClick={handleRestartMcp}>Restart All</button>
+                  <h3 style={{ fontSize: 16 }}>
+                    Instances - {selectedLocalMcp.name}
+                    {disabledIds.has(selectedLocalMcp.id) && (
+                      <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                        (disabled — spawn blocked)
+                      </span>
+                    )}
+                  </h3>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {!disabledIds.has(selectedLocalMcp.id) && (
+                      <button className="btn btn-ghost btn-sm" onClick={handleRestartMcp}>Restart All</button>
+                    )}
+                    <button
+                      className={`btn btn-sm ${disabledIds.has(selectedLocalMcp.id) ? 'btn-primary' : 'btn-ghost'}`}
+                      onClick={handleToggleDisableMcp}
+                      title={disabledIds.has(selectedLocalMcp.id)
+                        ? 'Re-allow spawning. Click Restart All afterwards to actually start it.'
+                        : 'Stop all instances and block any future spawn until re-enabled.'}
+                    >
+                      {disabledIds.has(selectedLocalMcp.id) ? 'Enable' : 'Disable'}
+                    </button>
+                  </div>
                 </div>
                 {instances.length === 0 ? (
                   <div className="empty-state"><h3>No running instances</h3></div>

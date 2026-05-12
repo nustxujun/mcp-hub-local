@@ -934,6 +934,64 @@ export class McpAggregator {
     });
   }
 
+  // ── MCP deleted: stop instances and drop backends WITHOUT re-spawning ──
+  //
+  // The delete path must NOT go through restartMcpInstances: that helper exists
+  // for the update/restart case and unconditionally re-spawns a singleton at the
+  // end, which would leak a process the moment the MCP row is removed from the
+  // database (the new child has no owner and never gets killed again).
+  async onMcpDeleted(mcpId: number): Promise<void> {
+    // 1. Tear down session backends first so their cached handles / ref counts
+    //    don't dangle once the runtime pool kills the processes underneath.
+    const affectedSessions: AggregatedSession[] = [];
+    for (const session of this.sessionStore.all()) {
+      let touched = false;
+      for (const [slug, backend] of session.backends) {
+        if (backend.mcpId !== mcpId) continue;
+
+        // Compensate the incrementRef that initBackend performed for shared
+        // modes. Per-session entries never increment, so skip them.
+        if (backend.mode !== 'per-session') {
+          try {
+            this.runtimePool.decrementRef(backend.runtimeKey);
+          } catch { /* swallow — refCount may already be missing */ }
+        }
+        session.backends.delete(slug);
+        touched = true;
+      }
+
+      if (touched) {
+        session.cachedTools = null;
+        session.cachedToolSignatures = null;
+        session.cachedSearchIndex = null;
+        session.cachedResources = null;
+        session.cachedPrompts = null;
+        affectedSessions.push(session);
+      }
+    }
+
+    // 2. Kill all processes for this mcpId across every key (singleton /
+    //    per-workspace / per-session) and reap orphan DB rows. stopByMcpId
+    //    ignores refCounts on purpose — appropriate here because the MCP is
+    //    going away regardless of how many sessions referenced it.
+    await this.runtimePool.stopByMcpId(mcpId);
+
+    // 3. Clear the disabled flag (if any) so a future create-with-same-id
+    //    doesn't inherit a stale disabled state.
+    this.runtimePool.setDisabled(mcpId, false);
+
+    // 4. Notify clients of the surviving sessions that their tool set shrunk.
+    for (const session of affectedSessions) {
+      this.pushToolsListChanged(session);
+    }
+
+    await this.logService.append({
+      level: 'info',
+      category: 'aggregator',
+      message: `MCP ${mcpId} deleted — stopped instances and removed from ${affectedSessions.length} session(s)`,
+    });
+  }
+
   // ── Restart all instances for a specific MCP without breaking other backends ──
 
   async restartMcpInstances(mcpId: number): Promise<void> {
@@ -943,6 +1001,11 @@ export class McpAggregator {
     // 2. Get the latest MCP definition
     const mcp = await this.registry.getById(mcpId);
     if (!mcp) return;
+
+    // If the user has disabled this MCP, stop here. The new config (if this
+    // was triggered by PATCH) is already persisted; sessions will pick it up
+    // once the user re-enables and explicitly restarts.
+    const disabled = this.runtimePool.isDisabled(mcpId);
 
     // 3. Collect all affected backends across sessions
     const allSessions = this.sessionStore.all();
@@ -957,13 +1020,40 @@ export class McpAggregator {
           this.runtimePool.decrementRef(backend.runtimeKey);
         }
 
-        // Reset backend state
-        backend.handle = null;
-        backend.status = 'starting';
-        backend.error = null;
+        if (disabled) {
+          // Keep the entry visible to the session but mark it inert.
+          backend.handle = null;
+          backend.status = 'error';
+          backend.error = 'MCP disabled by user';
+        } else {
+          // Reset backend state for re-init
+          backend.handle = null;
+          backend.status = 'starting';
+          backend.error = null;
+        }
 
         affected.push({ session, slug, backend });
       }
+    }
+
+    if (disabled) {
+      // Skip re-init and warmup — just notify clients that their tool set changed.
+      for (const { session } of affected) {
+        session.cachedTools = null;
+        session.cachedToolSignatures = null;
+        session.cachedSearchIndex = null;
+        session.cachedResources = null;
+        session.cachedPrompts = null;
+      }
+      const uniqueSessions = new Set(affected.map(a => a.session));
+      for (const session of uniqueSessions) this.pushToolsListChanged(session);
+
+      await this.logService.append({
+        level: 'info',
+        category: 'aggregator',
+        message: `MCP ${mcpId} restart skipped — MCP is disabled (${affected.length} backend(s) marked error)`,
+      });
+      return;
     }
 
     // 4. Re-init backends sequentially to avoid duplicate process spawns
@@ -1007,6 +1097,70 @@ export class McpAggregator {
       level: 'info',
       category: 'aggregator',
       message: `MCP ${mcpId} instances restarted — re-initialized ${affected.length} backend(s)`,
+    });
+  }
+
+  // ── User-driven Disable / Enable ──
+  //
+  // Disable: hard-stops every running instance for this MCP and refuses any
+  // future spawn (via the runtime pool's kill-switch), but leaves session
+  // backend entries visible so the UI / SSE clients can see the inert state.
+  //
+  // Enable: only flips the flag off. It does NOT auto-spawn — the user must
+  // explicitly click Restart (or a fresh session connect must trigger a
+  // lazy spawn). This matches the requested UX: "blocks restart unless the
+  // user clicks restart again".
+  async onMcpDisabled(mcpId: number): Promise<void> {
+    this.runtimePool.setDisabled(mcpId, true);
+
+    // Walk every session and mark matching backends as inert. Critical: when
+    // we null out `backend.handle`, we MUST also release the refCount that
+    // initBackend acquired earlier. `tearDownAllBackends` (called on session
+    // disconnect) skips decrement when `handle === null`, so without this
+    // compensation the refCount would leak permanently and per-workspace
+    // "stop when refCount hits 0" semantics would be broken.
+    const affectedSessions = new Set<AggregatedSession>();
+    for (const session of this.sessionStore.all()) {
+      for (const backend of session.backends.values()) {
+        if (backend.mcpId !== mcpId) continue;
+        // Only decrement if the backend actually held a ref. Placeholder
+        // entries (handle still null because init never finished) didn't
+        // increment, so leave them alone. Per-session never increments.
+        if (backend.handle && backend.mode !== 'per-session') {
+          this.runtimePool.decrementRef(backend.runtimeKey);
+        }
+        backend.handle = null;
+        backend.status = 'error';
+        backend.error = 'MCP disabled by user';
+        affectedSessions.add(session);
+      }
+    }
+
+    // Kill every running process for this mcpId regardless of mode / refCount.
+    await this.runtimePool.stopByMcpId(mcpId);
+
+    for (const session of affectedSessions) {
+      session.cachedTools = null;
+      session.cachedToolSignatures = null;
+      session.cachedSearchIndex = null;
+      session.cachedResources = null;
+      session.cachedPrompts = null;
+      this.pushToolsListChanged(session);
+    }
+
+    await this.logService.append({
+      level: 'info',
+      category: 'aggregator',
+      message: `MCP ${mcpId} disabled — stopped instances; affected ${affectedSessions.size} session(s)`,
+    });
+  }
+
+  async onMcpEnabled(mcpId: number): Promise<void> {
+    this.runtimePool.setDisabled(mcpId, false);
+    await this.logService.append({
+      level: 'info',
+      category: 'aggregator',
+      message: `MCP ${mcpId} enabled — spawn unblocked (will not auto-start; user must restart)`,
     });
   }
 

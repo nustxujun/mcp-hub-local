@@ -91,8 +91,10 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
   app.delete('/api/mcps/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const mcpId = parseInt(id);
-    // Propagate before deleting — stop instances and refresh sessions
-    await aggregator.onMcpConfigChanged(mcpId);
+    // Stop processes and drop backends BEFORE removing the DB row.
+    // onMcpDeleted (not onMcpConfigChanged) — the latter would re-spawn a
+    // singleton right before the row disappears, leaking an orphan child.
+    await aggregator.onMcpDeleted(mcpId);
     await registry.delete(mcpId);
     return reply.status(204).send();
   });
@@ -156,6 +158,33 @@ export function registerMcpRoutes(app: FastifyInstance, registry: McpRegistrySer
     }
     await aggregator.restartMcpInstances(mcp.id);
     return { ok: true };
+  });
+
+  // List MCP ids currently disabled (in-memory; resets on hub restart)
+  app.get('/api/mcps/disabled', async () => {
+    return { disabled: runtimePool.listDisabled() };
+  });
+
+  // Hard-stop all instances for this MCP and refuse future spawn until /enable
+  app.post('/api/mcps/:id/disable', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcp = await registry.getById(parseInt(id));
+    if (!mcp) {
+      return reply.status(404).send({ error: 'MCP not found' });
+    }
+    await aggregator.onMcpDisabled(mcp.id);
+    return { ok: true, disabled: true };
+  });
+
+  // Re-allow spawning. Does NOT auto-start — user must click Restart.
+  app.post('/api/mcps/:id/enable', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mcp = await registry.getById(parseInt(id));
+    if (!mcp) {
+      return reply.status(404).send({ error: 'MCP not found' });
+    }
+    await aggregator.onMcpEnabled(mcp.id);
+    return { ok: true, disabled: false };
   });
 
   // ── Tool Exposure ──
