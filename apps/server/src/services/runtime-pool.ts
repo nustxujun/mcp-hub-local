@@ -31,6 +31,45 @@ async function killProcessTree(pid: number | undefined, signal: NodeJS.Signals =
   }
 }
 
+/**
+ * Parse a Server-Sent Events response body and return the JSON-RPC payload
+ * matching the requested id. Falls back to the first parseable frame when no
+ * id matches — that covers servers that omit the id field on errors.
+ *
+ * SSE framing: frames are separated by a blank line; each frame may contain
+ * one or more `data:` lines whose contents are concatenated with `\n` per
+ * the EventSource spec.
+ */
+function parseSseJsonRpc(body: string, id: number | string): object | null {
+  const frames = body.split(/\r?\n\r?\n/);
+
+  const extractDataPayload = (frame: string): string => {
+    const dataLines: string[] = [];
+    for (const rawLine of frame.split(/\r?\n/)) {
+      if (rawLine.startsWith('data:')) {
+        // Per spec: a single leading space after the colon is stripped.
+        dataLines.push(rawLine.slice(5).replace(/^ /, ''));
+      }
+    }
+    return dataLines.join('\n');
+  };
+
+  let firstParsed: object | null = null;
+  for (const frame of frames) {
+    const payload = extractDataPayload(frame);
+    if (!payload) continue;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    if (parsed && parsed.id === id) return parsed;
+    if (firstParsed === null) firstParsed = parsed;
+  }
+  return firstParsed;
+}
+
 export interface RuntimeHandle {
   instanceId: number;
   mcpId: number;
@@ -41,6 +80,13 @@ export interface RuntimeHandle {
   process: ChildProcess | null;
   remoteUrl: string | null;
   remoteHeaders: Record<string, string>;
+  /**
+   * MCP Streamable HTTP session id. Captured from the `mcp-session-id` response
+   * header on a successful `initialize` and replayed on every subsequent request.
+   * Stateful servers (FastMCP / official SDKs default) reject requests without it
+   * with `400 Missing session ID`.
+   */
+  remoteSessionId: string | null;
   /** Queue to serialize requests to the same stdio process. */
   _requestQueue?: Promise<any>;
 }
@@ -103,12 +149,16 @@ export class RuntimePoolService {
     const config = mcp.configJson as { url: string; headers?: Record<string, string> };
 
     const now = new Date().toISOString();
+    // Status starts as 'starting'; the MCP `initialize` handshake performed by the
+    // caller (aggregator.initBackend or startAndInitialize) flips it to 'running'
+    // once it actually succeeds — otherwise a broken remote would silently sit at
+    // 'running' forever.
     const result = await this.db.insert(schema.runtimeInstances).values({
       mcpId: mcp.id,
       workspaceId,
       instanceMode: 'singleton',
       pid: null,
-      status: 'running',
+      status: 'starting',
       startedAt: now,
     }).returning();
 
@@ -122,6 +172,7 @@ export class RuntimePoolService {
       process: null,
       remoteUrl: config.url,
       remoteHeaders: config.headers || {},
+      remoteSessionId: null,
     };
 
     this.handles.set(key, handle);
@@ -214,6 +265,7 @@ export class RuntimePoolService {
       process: child,
       remoteUrl: null,
       remoteHeaders: {},
+      remoteSessionId: null,
     };
 
     this.handles.set(key, handle);
@@ -411,11 +463,21 @@ export class RuntimePoolService {
   }
 
   private async sendJsonRpcRemote(handle: RuntimeHandle, message: object, timeoutMs: number): Promise<object | null> {
+    const msg = message as { id?: number | string; method?: string };
+    const isInitialize = msg.method === 'initialize';
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept': 'application/json, text/event-stream',
       ...handle.remoteHeaders,
     };
+
+    // Replay the captured session id on every non-initialize request. The
+    // initialize call itself MUST NOT carry one — that's how the server knows
+    // to allocate a fresh session in stateful mode.
+    if (!isInitialize && handle.remoteSessionId) {
+      headers['mcp-session-id'] = handle.remoteSessionId;
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -429,13 +491,32 @@ export class RuntimePoolService {
       });
       clearTimeout(timer);
 
-      const msg = message as { id?: number | string };
+      // Capture the session id only on a successful initialize. Some servers
+      // (mcp-index observed) return a `mcp-session-id` header even on 4xx error
+      // responses; storing those would poison subsequent requests.
+      if (isInitialize && response.ok) {
+        const sid = response.headers.get('mcp-session-id');
+        if (sid) handle.remoteSessionId = sid;
+      }
+
       if (msg.id === undefined || msg.id === null) {
-        return null; // notification
+        return null; // notification — no body expected
       }
 
       const text = await response.text();
-      return text ? JSON.parse(text) : null;
+      if (!text) return null;
+
+      // Streamable HTTP allows the server to choose either application/json or
+      // text/event-stream per response. Pick the parser based on Content-Type
+      // (also tolerate a missing/wrong header by sniffing for `data:` prefix).
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      const looksLikeSse = contentType.includes('text/event-stream') ||
+                           /^\s*(event:|data:|id:|retry:)/m.test(text);
+
+      if (looksLikeSse) {
+        return parseSseJsonRpc(text, msg.id);
+      }
+      return JSON.parse(text);
     } catch (err) {
       clearTimeout(timer);
       throw err;
@@ -521,9 +602,56 @@ export class RuntimePoolService {
     return this.db.select().from(schema.runtimeInstances);
   }
 
-  /** Start a singleton stdio instance and perform MCP initialize handshake. */
+  /** Start a singleton instance (stdio or remote) and perform MCP initialize handshake. */
   async startAndInitialize(mcp: McpDefinition): Promise<RuntimeHandle> {
     const handle = await this.getOrCreate(mcp, 'singleton', null, undefined, null);
+
+    // Remote (Streamable HTTP) handshake: send `initialize` so sendJsonRpcRemote
+    // can capture `mcp-session-id` into the handle, then fire the
+    // `notifications/initialized` notification, then flip status to running.
+    // Without this the instance would sit at 'starting' until a client connects.
+    if (handle.remoteUrl) {
+      try {
+        const initId = Date.now() + Math.floor(Math.random() * 10000);
+        const initResp = await this.sendJsonRpc(handle, {
+          jsonrpc: '2.0',
+          method: 'initialize',
+          id: initId,
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'local-mcp-hub', version: '0.1.0' },
+          },
+        }, 10000) as any;
+
+        if (initResp?.result) {
+          await this.sendJsonRpc(handle, {
+            jsonrpc: '2.0',
+            method: 'notifications/initialized',
+          }).catch(() => { /* notifications are fire-and-forget */ });
+          await this.updateInstanceStatus(handle.instanceId, 'running');
+        } else {
+          await this.updateInstanceStatus(handle.instanceId, 'error');
+          this.logService.append({
+            level: 'error',
+            category: 'remote-mcp',
+            mcpId: mcp.id,
+            runtimeInstanceId: handle.instanceId,
+            message: `Remote initialize returned no result: ${JSON.stringify(initResp).slice(0, 500)}`,
+          });
+        }
+      } catch (err: any) {
+        await this.updateInstanceStatus(handle.instanceId, 'error');
+        this.logService.append({
+          level: 'error',
+          category: 'remote-mcp',
+          mcpId: mcp.id,
+          runtimeInstanceId: handle.instanceId,
+          message: `Remote handshake failed: ${err?.message || err}`,
+        });
+      }
+      return handle;
+    }
 
     if (handle.stdin && handle.stdout) {
       const initMsg = JSON.stringify({
