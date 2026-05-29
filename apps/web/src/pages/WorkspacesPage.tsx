@@ -56,7 +56,7 @@ export function WorkspacesPage() {
     }).catch(() => {});
   }, []);
 
-  const mcpUrl = selectedWs ? `http://localhost:${port}/w/${selectedWs.slug}` : '';
+  const mcpUrl = selectedWs ? `http://127.0.0.1:${port}/w/${selectedWs.slug}` : '';
 
   const handleCopyUrl = () => {
     if (!mcpUrl) return;

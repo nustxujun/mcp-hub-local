@@ -376,10 +376,10 @@ async function main() {
   await app.listen({ port: PORT, host: '0.0.0.0' });
   writePidFile(process.pid, PORT);
   healthCheck.start();
-  app.log.info(`MCP Hub Local running on http://localhost:${PORT}`);
-  app.log.info(`  API:     http://localhost:${PORT}/api`);
-  app.log.info(`  Web UI:  http://localhost:${PORT}/app`);
-  app.log.info(`  MCP:     http://localhost:${PORT}/w/<workspaceSlug>`);
+  app.log.info(`MCP Hub Local running on http://127.0.0.1:${PORT}`);
+  app.log.info(`  API:     http://127.0.0.1:${PORT}/api`);
+  app.log.info(`  Web UI:  http://127.0.0.1:${PORT}/app`);
+  app.log.info(`  MCP:     http://127.0.0.1:${PORT}/w/<workspaceSlug>`);
 
   // Auto-start MCPs and sync workspace configs (non-blocking)
   (async () => {

@@ -45,7 +45,7 @@ A single hub that takes **full control** of all MCP configurations across every 
 - **Flexible Instance Modes** - Local MCPs support multiple instantiation strategies: `singleton`, `per-workspace`, `per-session`
 - **PTC (Programmatic Tool Calling)** - AI clients see only `search_tools` and `execute_code` instead of dozens of individual tools, dramatically reducing tool count and context consumption
 - **Session Monitoring** - Monitor MCP usage per client session in real time
-- **Web Dashboard** - Manage everything from `http://localhost:3000/app`
+- **Web Dashboard** - Manage everything from `http://127.0.0.1:3000/app`
 
 ## Quick Start
 
@@ -64,14 +64,14 @@ npm install -g mcp-hub-local
 mcp-hub-local
 ```
 
-The hub starts at **[http://localhost:3000](http://localhost:3000)** by default.
+The hub starts at **[http://127.0.0.1:3000](http://127.0.0.1:3000)** by default.
 
 
 | URL                              | Description               |
 | -------------------------------- | ------------------------- |
-| `http://localhost:3000/app`      | Web Dashboard             |
-| `http://localhost:3000/api`      | REST API                  |
-| `http://localhost:3000/w/<slug>` | MCP Proxy (per workspace) |
+| `http://127.0.0.1:3000/app`      | Web Dashboard             |
+| `http://127.0.0.1:3000/api`      | REST API                  |
+| `http://127.0.0.1:3000/w/<slug>` | MCP Proxy (per workspace) |
 
 
 ### Development (from source)
@@ -324,7 +324,7 @@ These are inherent limitations of prompt-based control. Different models vary in
 
 ## Web Dashboard
 
-Access the dashboard at **[http://localhost:3000/app](http://localhost:3000/app)**.
+Access the dashboard at **[http://127.0.0.1:3000/app](http://127.0.0.1:3000/app)**.
 
 
 | Page           | Description                                                                 |
@@ -402,7 +402,7 @@ All data is stored in a SQLite database at `./data/hub.db` relative to the proje
 - **灵活的实例模式** - 本地 MCP 支持多种实例化模式：`singleton`（全局单例）、`per-workspace`（按工作区）、`per-session`（按会话）
 - **PTC (Programmatic Tool Calling)** - AI 客户端不再直接看到数十个独立工具，而是通过 `search_tools` 搜索可用工具、再通过 `execute_code` 编写 Python 脚本批量调用，大幅减少工具数量和上下文消耗
 - **会话监控** - 实时监控每个客户端会话的 MCP 使用情况
-- **Web 控制面板** - 通过 `http://localhost:3000/app` 统一管理
+- **Web 控制面板** - 通过 `http://127.0.0.1:3000/app` 统一管理
 
 ### 前置要求
 
@@ -419,14 +419,14 @@ npm install -g mcp-hub-local
 mcp-hub-local
 ```
 
-默认启动地址为 **[http://localhost:3000](http://localhost:3000)**。
+默认启动地址为 **[http://127.0.0.1:3000](http://127.0.0.1:3000)**。
 
 
 | 地址                               | 说明           |
 | -------------------------------- | ------------ |
-| `http://localhost:3000/app`      | Web 控制面板     |
-| `http://localhost:3000/api`      | REST API     |
-| `http://localhost:3000/w/<slug>` | MCP 代理（按工作区） |
+| `http://127.0.0.1:3000/app`      | Web 控制面板     |
+| `http://127.0.0.1:3000/api`      | REST API     |
+| `http://127.0.0.1:3000/w/<slug>` | MCP 代理（按工作区） |
 
 
 ### 开发模式（从源码）
@@ -679,7 +679,7 @@ PTC 依赖工具描述中的提示词来指导 AI 严格遵循 **先搜索 → �
 
 ## Web 控制面板
 
-访问 **[http://localhost:3000/app](http://localhost:3000/app)** 打开控制面板。
+访问 **[http://127.0.0.1:3000/app](http://127.0.0.1:3000/app)** 打开控制面板。
 
 
 | 页面      | 说明                                      |

@@ -33,7 +33,7 @@ export class ConfigSyncService {
     const portValue = await this.settingsService.get<number>('port');
     const port = portValue || DEFAULT_PORT;
 
-    const hubEndpointUrl = `http://localhost:${port}/w/${workspace.slug}`;
+    const hubEndpointUrl = `http://127.0.0.1:${port}/w/${workspace.slug}`;
 
     const endpoints: McpEndpointInfo[] = enabledBindings.length > 0
       ? [{

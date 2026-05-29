@@ -145,6 +145,6 @@ async function buildEndpoints(
   return [{
     name: 'mcp-hub-local',
     slug: workspaceSlug,
-    url: `http://localhost:${port}/w/${workspaceSlug}`,
+    url: `http://127.0.0.1:${port}/w/${workspaceSlug}`,
   }];
 }
