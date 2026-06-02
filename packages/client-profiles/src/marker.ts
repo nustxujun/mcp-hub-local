@@ -19,21 +19,21 @@ export function buildRuleBody(input: RuleBodyInput): string {
   const { mcpNames } = input;
 
   if (mcpNames.length === 0) {
-    return `# Available MCP Servers (via mcp-hub-local)
+    return `# Available MCP Tools (via mcp-hub-local)
 
 > Auto-generated. Do not edit; overwritten on next sync.
 
-The \`mcp-hub-local\` proxy currently has no downstream MCP servers bound to this workspace.
+The \`mcp-hub-local\` proxy currently has no downstream MCP tools bound to this workspace.
 `;
   }
 
   const list = mcpNames.map(n => `- ${n}`).join('\n');
 
-  return `# Available MCP Servers (via mcp-hub-local)
+  return `# Available MCP Tools (via mcp-hub-local)
 
 > Auto-generated. Do not edit; overwritten on next sync.
 
-The \`mcp-hub-local\` proxy exposes only these MCP servers — do not assume any others exist:
+The \`mcp-hub-local\` proxy exposes only these MCP tools — do not assume any others exist:
 
 ${list}
 `;
